@@ -1,0 +1,149 @@
+'use client'
+import Link from 'next/link'
+import {
+  FileText, Globe, Code2, Sparkles, ClipboardList, Download,
+  CheckCircle2, Circle, ArrowRight, AlertCircle
+} from 'lucide-react'
+import { mockProjects, mockDocuments, mockSiteAnalysis, statusLabels, statusColors, formatDateTime } from '@/lib/mock-data'
+import { clsx } from 'clsx'
+
+export default function ProjectPage({ params }: { params: { id: string } }) {
+  const project = mockProjects.find(p => p.id === params.id) || mockProjects[0]
+  const docs = mockDocuments.filter(d => d.projectId === params.id)
+  const customerDocs = docs.filter(d => d.category === 'customer_doc')
+  const knowledgeDocs = docs.filter(d => d.category === 'shift_knowledge')
+  const sourceDocs = docs.filter(d => d.category === 'source_code')
+
+  const steps = [
+    {
+      href: `/projects/${params.id}/documents`,
+      icon: FileText,
+      title: 'ドキュメント管理',
+      desc: '要件定義書・設計書・QAナレッジをアップロード',
+      done: docs.length > 0,
+      count: `${docs.length}件のファイル`,
+    },
+    {
+      href: `/projects/${params.id}/url-analysis`,
+      icon: Globe,
+      title: 'URL構造分析',
+      desc: 'テスト対象サイトのURL・画面構造を解析',
+      done: mockSiteAnalysis.projectId === params.id,
+      count: mockSiteAnalysis.projectId === params.id ? `${mockSiteAnalysis.pageCount}ページ解析済` : '未実施',
+    },
+    {
+      href: `/projects/${params.id}/source-code`,
+      icon: Code2,
+      title: 'ソースコード取込',
+      desc: 'ソースコードを読み込んでテスト精度を向上',
+      done: sourceDocs.length > 0,
+      count: sourceDocs.length > 0 ? `${sourceDocs.length}件取込済` : '任意',
+    },
+    {
+      href: `/projects/${params.id}/generate`,
+      icon: Sparkles,
+      title: 'AIテスト生成',
+      desc: 'AIが品質プロとしてテスト項目を自動生成',
+      done: project.testItemCount > 0,
+      count: project.testItemCount > 0 ? `${project.testItemCount}件生成済` : '未実行',
+    },
+    {
+      href: `/projects/${params.id}/test-items`,
+      icon: ClipboardList,
+      title: 'テスト項目書確認',
+      desc: 'テスト項目を確認・編集・調整する',
+      done: project.status === 'completed',
+      count: '',
+    },
+    {
+      href: `/projects/${params.id}/export`,
+      icon: Download,
+      title: 'Excel出力',
+      desc: 'テスト項目書をExcelファイルでダウンロード',
+      done: false,
+      count: '',
+    },
+  ]
+
+  return (
+    <div className="max-w-4xl animate-fade-in space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="text-xl font-bold text-gray-900">{project.name}</h1>
+            <span className={clsx('badge', statusColors[project.status])}>
+              {statusLabels[project.status]}
+            </span>
+          </div>
+          <p className="text-sm text-gray-500">{project.description}</p>
+          <p className="text-xs text-gray-400 mt-1">最終更新：{formatDateTime(project.updatedAt)}</p>
+        </div>
+      </div>
+
+      {/* Stats cards */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'ドキュメント', value: docs.length, sub: `顧客資料${customerDocs.length} / ナレッジ${knowledgeDocs.length}` },
+          { label: 'テスト項目数', value: project.testItemCount.toLocaleString(), sub: '生成済テスト項目' },
+          { label: '解析ページ数', value: mockSiteAnalysis.projectId === params.id ? mockSiteAnalysis.pageCount : 0, sub: 'URLサイト構造分析' },
+        ].map(({ label, value, sub }) => (
+          <div key={label} className="card p-4 text-center">
+            <p className="text-2xl font-bold text-shift-800">{value}</p>
+            <p className="text-sm font-medium text-gray-700 mt-0.5">{label}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Flow steps */}
+      <div className="card">
+        <div className="p-4 border-b border-gray-100">
+          <h2 className="section-title">テスト作成フロー</h2>
+          <p className="text-xs text-gray-500 mt-0.5">以下の手順でテスト項目書を作成します</p>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {steps.map(({ href, icon: Icon, title, desc, done, count }, i) => (
+            <Link key={href} href={href}>
+              <div className="flex items-center gap-4 p-4 hover:bg-gray-50 transition-colors group">
+                <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
+                  {done
+                    ? <CheckCircle2 className="w-6 h-6 text-green-500" />
+                    : <Circle className="w-6 h-6 text-gray-300" />
+                  }
+                </div>
+                <div className="w-9 h-9 bg-shift-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-shift-100 transition-colors">
+                  <Icon className="w-5 h-5 text-shift-700" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">Step {i + 1}</span>
+                    <span className="text-sm font-semibold text-gray-900">{title}</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                </div>
+                {count && (
+                  <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0',
+                    done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  )}>{count}</span>
+                )}
+                <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-shift-600 flex-shrink-0 transition-colors" />
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Info box */}
+      {docs.length === 0 && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">ドキュメントを追加してください</p>
+            <p className="text-xs text-amber-600 mt-0.5">AI生成を開始するには、まず「ドキュメント管理」から要件定義書などの資料をアップロードしてください。</p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
