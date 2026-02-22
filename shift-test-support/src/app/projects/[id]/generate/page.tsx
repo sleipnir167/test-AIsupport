@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
   LayoutGrid, List
 } from 'lucide-react'
-import type { SiteAnalysis, PageInfo, Document } from '@/types' // Document型を追加
+import type { SiteAnalysis, PageInfo, Document } from '@/types'
 
 const STAGES = [
   { label: 'RAG検索中（関連ドキュメント・サイト構造・ソースコードを取得）', pct: 15 },
@@ -31,7 +31,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   // データ
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [docs, setDocs] = useState<Document[]>([]) // ドキュメント一覧を保持するように変更
+  const [docs, setDocs] = useState<Document[]>([])
   const [dataLoading, setDataLoading] = useState(true)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
@@ -52,7 +52,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
 
-  // 修正ポイント：Promise.allでデータを一括取得
   useEffect(() => {
     Promise.all([
       fetch(`/api/site-analysis?projectId=${params.id}`).then(r => r.json()),
@@ -66,7 +65,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .finally(() => setDataLoading(false))
   }, [params.id])
 
-  // 判定ロジックをレンダリング時に計算（page.tsxと同じ方式）
   const sourceDocs = docs.filter(d => 
     d.category === 'source_code' && (
       d.status === ('completed' as any) || 
@@ -75,8 +73,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     )
   )
   const hasSourceCode = sourceDocs.length > 0
-  
-  // 通常ドキュメント（ソースコード以外）の存在確認
   const hasDocuments = docs.some(d => d.category !== 'source_code')
 
   const togglePerspective = (value: string) => {
@@ -86,8 +82,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       return next
     })
   }
-
-  // ... (togglePage, getTargetPages, generate 関数は変更なしのため中略) ...
 
   const togglePage = (url: string) => {
     setSelectedPages(prev => {
@@ -136,8 +130,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           targetPages,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'AI生成に失敗しました')
+
+      // 修正ポイント：レスポンスをまずテキストで受け取り、JSONかどうか判定する
+      const responseText = await res.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        // JSONでない（HTMLエラーページなどの）場合
+        throw new Error(`サーバーエラーが発生しました。タイムアウトの可能性があります。内容: ${responseText.slice(0, 50)}...`);
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || 'AI生成に失敗しました');
+      }
 
       clearInterval(interval)
       stageTimers.forEach(t => clearTimeout(t))
@@ -150,7 +156,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       setRagBreakdown(data.breakdown)
       setDone(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'AI生成に失敗しました')
+      console.error("Generate Error:", e);
+      setError(e instanceof Error ? e.message : '予期せぬエラーが発生しました');
     } finally {
       clearInterval(interval)
       stageTimers.forEach(t => clearTimeout(t))
@@ -188,7 +195,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               icon: Code2,    
               label: 'ソースコード',  
               available: hasSourceCode, 
-              // 修正：件数を表示するように変更
               note: hasSourceCode ? `${sourceDocs.length}件取込済` : 'ソースコード取込で確認' 
             },
           ].map(({ icon: Icon, label, available, note }) => (
@@ -203,7 +209,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* ... (以下、生成対象・詳細設定などの表示部分は変更なし) ... */}
       {/* 生成対象：画面選択 */}
       {siteAnalysis && (
         <div className="card p-5">
@@ -273,9 +278,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                       <p className="text-sm font-medium text-gray-800 truncate">{page.title}</p>
                       <p className="text-xs text-gray-400 font-mono truncate">{page.url}</p>
                     </div>
-                    <div className="text-xs text-gray-400 flex-shrink-0">
-                      フォーム:{page.forms} ボタン:{page.buttons}
-                    </div>
                   </label>
                 ))}
               </div>
@@ -294,46 +296,23 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <Settings className="w-4 h-4 text-gray-500" />
             <span className="font-semibold text-gray-900 text-sm">生成パラメータ</span>
           </div>
-          {showAdvanced
-            ? <ChevronUp className="w-4 h-4 text-gray-400" />
-            : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
         </button>
 
         {showAdvanced && (
           <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
             <div>
-              <label className="label">最大生成件数</label>
+              <label className="label text-xs mb-2 block">最大生成件数</label>
               <div className="flex gap-2 flex-wrap">
-                {[100, 200, 300, 500, 1000, 2000].map(v => (
+                {[100, 200, 300, 500].map(v => (
                   <button
                     key={v}
                     onClick={() => setMaxItems(v)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      maxItems === v
-                        ? 'bg-shift-800 text-white border-shift-800'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      maxItems === v ? 'bg-shift-800 text-white' : 'bg-white text-gray-600'
                     }`}
                   >
-                    {v.toLocaleString()}件
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="label">テスト観点（複数選択）</label>
-              <div className="flex flex-wrap gap-2">
-                {PERSPECTIVE_KEYS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => togglePerspective(value)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      selectedPerspectives.has(value)
-                        ? 'bg-shift-100 text-shift-800 border-shift-400'
-                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    {label}
+                    {v}件
                   </button>
                 ))}
               </div>
@@ -344,18 +323,16 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
       {!generating && !done && (
         <button
-          className="btn-primary w-full justify-center py-4 text-base"
+          className="bg-black text-white w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold hover:bg-gray-800 transition-all"
           onClick={generate}
         >
-          <Sparkles className="w-5 h-5" />
-          {targetMode === 'pages' && selectedPages.size > 0
-            ? `選択した${selectedPages.size}画面のテスト項目を生成（追記）`
-            : 'AIテスト項目を生成する'}
+          <Sparkles className="w-5 h-5 text-yellow-400" />
+          AIテスト項目を生成する
         </button>
       )}
 
       {generating && (
-        <div className="card p-6 animate-fade-in">
+        <div className="card p-6 border-2 border-shift-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 text-shift-600 animate-spin" />
@@ -363,24 +340,18 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             </div>
             <span className="text-lg font-bold text-shift-700">{Math.round(progress)}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
+          <div className="w-full bg-gray-100 rounded-full h-3 mb-4">
             <div
-              className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-500"
+              className="bg-shift-600 h-3 rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           </div>
           <div className="space-y-2">
             {STAGES.map((stage, i) => (
-              <div key={stage.label} className={`flex items-center gap-2 text-xs transition-all ${
-                i === stageIdx ? 'text-shift-700 font-semibold'
-                : i < stageIdx ? 'text-green-600'
-                : 'text-gray-400'
+              <div key={stage.label} className={`flex items-center gap-2 text-xs ${
+                i === stageIdx ? 'text-shift-700 font-bold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'
               }`}>
-                {i < stageIdx
-                  ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  : i === stageIdx
-                    ? <div className="w-3.5 h-3.5 rounded-full border-2 border-shift-600 border-t-transparent animate-spin flex-shrink-0" />
-                    : <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />}
+                {i < stageIdx ? <CheckCircle2 className="w-3.5 h-3.5" /> : <div className="w-3.5 h-3.5 rounded-full border-2 border-current" />}
                 {stage.label}
               </div>
             ))}
@@ -389,38 +360,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       )}
 
       {error && (
-        <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-red-800">生成に失敗しました</p>
-            <p className="text-xs text-red-600 mt-0.5">{error}</p>
-            <button className="btn-secondary mt-3 text-xs py-1.5" onClick={() => setError('')}>
-              再試行
-            </button>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+          <div className="flex items-center gap-2 text-red-700 font-bold mb-1">
+            <AlertCircle className="w-4 h-4" />
+            <span className="text-sm">生成エラー</span>
           </div>
+          <p className="text-xs text-red-600 leading-relaxed mb-3">{error}</p>
+          <button className="text-xs bg-white border border-red-200 px-3 py-1.5 rounded-lg text-red-700 hover:bg-red-100" onClick={() => setError('')}>
+            閉じる
+          </button>
         </div>
       )}
 
       {done && (
-        <div className="card p-6 text-center animate-slide-up">
+        <div className="card p-8 text-center border-2 border-green-100">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 className="w-8 h-8 text-green-600" />
           </div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">生成完了！</h3>
-          <p className="text-sm text-gray-600 mb-3">{resultCount}件のテスト項目を生成しました</p>
-          {ragBreakdown && (
-            <div className="flex justify-center gap-4 text-xs text-gray-500 mb-5">
-              <span>📄 ドキュメント: {ragBreakdown.documents}チャンク</span>
-              <span>🌐 サイト構造: {ragBreakdown.siteAnalysis}チャンク</span>
-              <span>💻 ソースコード: {ragBreakdown.sourceCode}チャンク</span>
-            </div>
-          )}
+          <h3 className="text-xl font-bold text-gray-900 mb-2">生成が完了しました</h3>
+          <p className="text-sm text-gray-500 mb-6">{resultCount}件のテスト項目が作成されました</p>
           <div className="flex gap-3 justify-center">
-            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0) }}>
-              再生成する
+            <button className="px-6 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50" onClick={() => { setDone(false); setProgress(0) }}>
+              再生成
             </button>
-            <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
-              テスト項目書を確認
+            <button className="px-6 py-2 bg-shift-700 text-white rounded-lg text-sm font-bold hover:bg-shift-800" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
+              項目を確認する
             </button>
           </div>
         </div>
