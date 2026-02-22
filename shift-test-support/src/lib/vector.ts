@@ -32,24 +32,24 @@ export function chunkText(text: string, chunkSize = 800, overlap = 100): string[
 
 /**
  * ドキュメントのチャンクをベクトルDBに格納する
- * Upstash Vector は自動でEmbeddingを生成（モデル設定が必要）
- * ※ フリープランではtext embeddingが使えるため、テキストとして格納
  */
 export async function upsertChunks(
   projectId: string,
   docId: string,
   filename: string,
   category: string,
-  chunks: string[]
+  chunks: string[],
+  extraMetadata: Record<string, any> = {} // 6つ目の引数を追加（デフォルトは空オブジェクト）
 ): Promise<number> {
   const batchSize = 100
   let total = 0
 
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize)
+    
     const vectors = batch.map((text, j) => ({
       id: `${docId}-chunk-${i + j}`,
-      data: text, // Upstash Vector の「data」フィールドで自動Embedding
+      data: text,
       metadata: {
         projectId,
         docId,
@@ -57,6 +57,7 @@ export async function upsertChunks(
         category,
         chunkIndex: i + j,
         text,
+        ...extraMetadata, // ここで pageUrl などの追加情報がマージされます
       } as VectorMetadata,
     }))
 
