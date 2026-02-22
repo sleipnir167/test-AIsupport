@@ -52,23 +52,30 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
 
-  useEffect(() => {
+useEffect(() => {
+    // サイト構造分析の取得
     fetch(`/api/site-analysis?projectId=${params.id}`)
       .then(r => r.json())
       .then(data => { if (data?.id) setSiteAnalysis(data) })
       .catch(() => {})
       .finally(() => setDataLoading(false))
   
+    // ソースコードの取込状況チェック
     fetch(`/api/documents?projectId=${params.id}`)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          // category が source_code 且つ status が completed のものが1つでもあるか
-          const exists = data.some(d => d.category === 'source_code' && d.status === 'completed')
+          // 条件を緩和：
+          // 1. カテゴリが 'source_code' である
+          // 2. ステータスが 'completed'、または空文字 ''、または status プロパティ自体がない
+          const exists = data.some(d => 
+            d.category === 'source_code' && 
+            (d.status === 'completed' || d.status === '' || !d.status)
+          )
           setHasSourceCode(exists)
         }
       })
-      .catch(() => {})
+      .catch(err => console.error("Document fetch error:", err))
   }, [params.id])
 
   const togglePerspective = (value: string) => {
