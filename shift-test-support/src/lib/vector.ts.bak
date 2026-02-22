@@ -13,7 +13,6 @@ export interface VectorMetadata {
   chunkIndex: number
   text: string
   pageUrl?: string   // site_analysis 時のページURL
-  [key: string]: string | number | boolean | null
 }
 
 export function chunkText(text: string, chunkSize = 800, overlap = 100): string[] {

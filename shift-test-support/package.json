@@ -22,7 +22,8 @@
     "openai": "^4.52.7",
     "pdf-parse": "^1.1.1",
     "mammoth": "^1.8.0",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "typescript": "^5",

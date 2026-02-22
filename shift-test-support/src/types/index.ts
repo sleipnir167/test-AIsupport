@@ -9,6 +9,8 @@ export interface Project {
   status: ProjectStatus
   testItemCount: number
   documentCount: number
+  hasUrlAnalysis: boolean
+  hasSourceCode: boolean
   createdAt: string
   updatedAt: string
 }
@@ -46,6 +48,7 @@ export interface PageInfo {
   forms: number
   buttons: number
   links: number
+  description?: string
 }
 
 export interface SiteAnalysis {
@@ -55,6 +58,7 @@ export interface SiteAnalysis {
   status: SiteAnalysisStatus
   pageCount: number
   pages: PageInfo[]
+  chunkCount?: number
   createdAt: string
 }
 
@@ -78,19 +82,6 @@ export interface TestItem {
   automatable: Automatable
   orderIndex: number
   isDeleted: boolean
-}
-
-// 生成ジョブ
-export type GenerationStatus = 'idle' | 'running' | 'completed' | 'error'
-
-export interface GenerationJob {
-  id: string
-  projectId: string
-  status: GenerationStatus
-  progress: number
-  progressMessage: string
-  itemCount: number | null
-  createdAt: string
 }
 
 // ユーザー
