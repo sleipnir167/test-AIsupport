@@ -18,6 +18,8 @@ export const mockProjects: Project[] = [
     documentCount: 5,
     createdAt: '2024-11-20T09:00:00Z',
     updatedAt: '2024-12-01T14:32:00Z',
+    hasUrlAnalysis: false, 
+    hasSourceCode: false,
   },
   {
     id: 'proj-002',
@@ -29,6 +31,8 @@ export const mockProjects: Project[] = [
     documentCount: 3,
     createdAt: '2024-11-28T10:00:00Z',
     updatedAt: '2024-12-02T09:15:00Z',
+    hasUrlAnalysis: false, 
+    hasSourceCode: false,
   },
   {
     id: 'proj-003',
@@ -40,6 +44,8 @@ export const mockProjects: Project[] = [
     documentCount: 8,
     createdAt: '2024-10-15T08:00:00Z',
     updatedAt: '2024-11-25T16:00:00Z',
+    hasUrlAnalysis: false, 
+    hasSourceCode: false,
   },
   {
     id: 'proj-004',
@@ -51,6 +57,8 @@ export const mockProjects: Project[] = [
     documentCount: 1,
     createdAt: '2024-12-01T11:00:00Z',
     updatedAt: '2024-12-01T11:00:00Z',
+    hasUrlAnalysis: false, 
+    hasSourceCode: false,
   },
 ]
 
