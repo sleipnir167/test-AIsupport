@@ -73,17 +73,26 @@ export async function upsertChunks(
 export async function searchChunks(
   query: string,
   projectId: string,
-  topK = 15
+  topK = 15,
+  category?: string // 4つ目の引数を追加
 ): Promise<VectorMetadata[]> {
+  // 基本のフィルター条件（projectIdの一致）
+  let filterString = `projectId = '${projectId}'`;
+  
+  // もしcategoryが指定されていれば、フィルター条件に追加する
+  if (category) {
+    filterString += ` AND category = '${category}'`;
+  }
+
   const results = await vectorIndex.query<VectorMetadata>({
     data: query,
     topK,
     includeMetadata: true,
-    filter: `projectId = '${projectId}'`,
+    filter: filterString, // 動的に作成したフィルターを使用
   })
 
   return results
-    .filter(r => r.score > 0.5)
+    .filter(r => (r.score ?? 0) > 0.5) // scoreがundefinedの場合を考慮して修正
     .map(r => r.metadata!)
     .filter(Boolean)
 }
