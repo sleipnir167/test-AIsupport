@@ -29,9 +29,11 @@ export interface Document {
   subCategory: DocumentSubCategory
   fileSize: number
   mimeType: string
+  blobUrl?: string
   status: DocumentStatus
   chunkCount: number | null
   errorMessage: string | null
+  isDeleted: boolean
   createdAt: string
 }
 

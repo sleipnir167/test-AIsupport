@@ -1,6 +1,5 @@
 'use client'
 import { useState } from 'react'
-import clsx from 'clsx'
 import { Download, FileSpreadsheet, CheckCircle2, Settings2, Layers, Table2 } from 'lucide-react'
 import { mockTestItems, mockProjects, priorityLabels, automatableLabels } from '@/lib/mock-data'
 
