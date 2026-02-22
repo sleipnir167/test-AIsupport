@@ -31,6 +31,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   // データ
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
+  const [hasSourceCode, setHasSourceCode] = useState(false)
   const [dataLoading, setDataLoading] = useState(true)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
@@ -57,6 +58,17 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .then(data => { if (data?.id) setSiteAnalysis(data) })
       .catch(() => {})
       .finally(() => setDataLoading(false))
+  
+    fetch(`/api/documents?projectId=${params.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          // category が source_code 且つ status が completed のものが1つでもあるか
+          const exists = data.some(d => d.category === 'source_code' && d.status === 'completed')
+          setHasSourceCode(exists)
+        }
+      })
+      .catch(() => {})
   }, [params.id])
 
   const togglePerspective = (value: string) => {
@@ -154,7 +166,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           {[
             { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true, note: 'ドキュメント管理で確認' },
             { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis, note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: false, note: 'ソースコード取込で確認' },
+            { icon: Code2,    label: 'ソースコード',  available: hasSourceCode, note: hasSourceCode ? '取込済' : 'ソースコード取込で確認' },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
@@ -166,7 +178,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           ))}
         </div>
       </div>
-
       {/* 生成対象：画面選択 */}
       {siteAnalysis && (
         <div className="card p-5">
