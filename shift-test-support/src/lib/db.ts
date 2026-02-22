@@ -2,8 +2,8 @@ import { Redis } from '@upstash/redis'
 import type { Project, TestItem, Document, SiteAnalysis } from '@/types'
 
 export const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 })
 
 const KEY = {
@@ -125,4 +125,36 @@ export async function clearTestItems(projectId: string): Promise<void> {
   if (!ids.length) return
   await Promise.all(ids.map(id => redis.del(KEY.testItem(id))))
   await redis.del(KEY.testList(projectId))
+}
+
+// ─── 生成ジョブ ──────────────────────────────────────────────
+export interface GenerationJob {
+  id: string
+  projectId: string
+  status: 'pending' | 'running' | 'completed' | 'error'
+  stage: number
+  message: string
+  count?: number
+  breakdown?: { documents: number; siteAnalysis: number; sourceCode: number }
+  model?: string
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+
+const JOB_KEY = (jobId: string) => `genjob:${jobId}`
+const JOB_TTL = 60 * 60 // 1時間でジョブを自動削除
+
+export async function saveJob(job: GenerationJob): Promise<void> {
+  await redis.set(JOB_KEY(job.id), job, { ex: JOB_TTL })
+}
+
+export async function getJob(jobId: string): Promise<GenerationJob | null> {
+  return redis.get<GenerationJob>(JOB_KEY(jobId))
+}
+
+export async function updateJob(jobId: string, patch: Partial<GenerationJob>): Promise<void> {
+  const existing = await redis.get<GenerationJob>(JOB_KEY(jobId))
+  if (!existing) return
+  await redis.set(JOB_KEY(jobId), { ...existing, ...patch, updatedAt: new Date().toISOString() }, { ex: JOB_TTL })
 }
