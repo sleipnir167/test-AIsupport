@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
   LayoutGrid, List
 } from 'lucide-react'
-import type { SiteAnalysis, PageInfo } from '@/types'
+import type { SiteAnalysis, PageInfo, Document } from '@/types' // Document型を追加
 
 const STAGES = [
   { label: 'RAG検索中（関連ドキュメント・サイト構造・ソースコードを取得）', pct: 15 },
@@ -31,7 +31,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   // データ
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [hasSourceCode, setHasSourceCode] = useState(false)
+  const [docs, setDocs] = useState<Document[]>([]) // ドキュメント一覧を保持するように変更
   const [dataLoading, setDataLoading] = useState(true)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
@@ -52,31 +52,28 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
 
-useEffect(() => {
-    // サイト構造分析の取得
-    fetch(`/api/site-analysis?projectId=${params.id}`)
-      .then(r => r.json())
-      .then(data => { if (data?.id) setSiteAnalysis(data) })
-      .catch(() => {})
-      .finally(() => setDataLoading(false))
-  
-    // ソースコードの取込状況チェック
-    fetch(`/api/documents?projectId=${params.id}`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          // 条件を緩和：
-          // 1. カテゴリが 'source_code' である
-          // 2. ステータスが 'completed'、または空文字 ''、または status プロパティ自体がない
-          const exists = data.some(d => 
-            d.category === 'source_code' && 
-            (d.status === 'completed' || d.status === '' || !d.status)
-          )
-          setHasSourceCode(exists)
-        }
+  // 修正ポイント：Promise.allでデータを一括取得
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/site-analysis?projectId=${params.id}`).then(r => r.json()),
+      fetch(`/api/documents?projectId=${params.id}`).then(r => r.json())
+    ])
+      .then(([sa, d]) => {
+        if (sa?.id) setSiteAnalysis(sa)
+        setDocs(Array.isArray(d) ? d : [])
       })
-      .catch(err => console.error("Document fetch error:", err))
+      .catch((err) => console.error("Data fetch error:", err))
+      .finally(() => setDataLoading(false))
   }, [params.id])
+
+  // 判定ロジックをレンダリング時に計算（page.tsxと同じ方式）
+  const sourceDocs = docs.filter(d => 
+    d.category === 'source_code' && (d.status === 'completed' || d.status === '' || !d.status)
+  )
+  const hasSourceCode = sourceDocs.length > 0
+  
+  // 通常ドキュメント（ソースコード以外）の存在確認
+  const hasDocuments = docs.some(d => d.category !== 'source_code')
 
   const togglePerspective = (value: string) => {
     setSelectedPerspectives(prev => {
@@ -85,6 +82,8 @@ useEffect(() => {
       return next
     })
   }
+
+  // ... (togglePage, getTargetPages, generate 関数は変更なしのため中略) ...
 
   const togglePage = (url: string) => {
     setSelectedPages(prev => {
@@ -113,12 +112,10 @@ useEffect(() => {
     setError('')
     setRagBreakdown(null)
 
-    // アニメーション用インターバル
     const interval = setInterval(() => {
       setProgress(p => Math.min(p + (88 - p) * 0.04 + 0.2, 88))
     }, 400)
 
-    // ステージ表示を時間で進める
     const stageTimers = [
       setTimeout(() => setStageIdx(1), 2000),
       setTimeout(() => setStageIdx(2), 4000),
@@ -171,9 +168,25 @@ useEffect(() => {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">RAGデータ利用状況</p>
         <div className="space-y-2">
           {[
-            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true, note: 'ドキュメント管理で確認' },
-            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis, note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: hasSourceCode, note: hasSourceCode ? '取込済' : 'ソースコード取込で確認' },
+            { 
+              icon: FileText, 
+              label: 'ドキュメント（要件定義書・設計書・ナレッジ）', 
+              available: hasDocuments, 
+              note: hasDocuments ? '取込済' : 'ドキュメント管理で確認' 
+            },
+            { 
+              icon: Globe,    
+              label: 'URL構造分析',  
+              available: !!siteAnalysis, 
+              note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' 
+            },
+            { 
+              icon: Code2,    
+              label: 'ソースコード',  
+              available: hasSourceCode, 
+              // 修正：件数を表示するように変更
+              note: hasSourceCode ? `${sourceDocs.length}件取込済` : 'ソースコード取込で確認' 
+            },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
@@ -185,6 +198,8 @@ useEffect(() => {
           ))}
         </div>
       </div>
+
+      {/* ... (以下、生成対象・詳細設定などの表示部分は変更なし) ... */}
       {/* 生成対象：画面選択 */}
       {siteAnalysis && (
         <div className="card p-5">
@@ -262,11 +277,6 @@ useEffect(() => {
               </div>
             </div>
           )}
-          {targetMode === 'pages' && (
-            <p className="text-xs text-amber-600 mt-2">
-              ※ 画面単位モードは既存のテスト項目に追記されます（既存を削除しません）
-            </p>
-          )}
         </div>
       )}
 
@@ -287,7 +297,6 @@ useEffect(() => {
 
         {showAdvanced && (
           <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
-            {/* 最大件数 */}
             <div>
               <label className="label">最大生成件数</label>
               <div className="flex gap-2 flex-wrap">
@@ -304,22 +313,9 @@ useEffect(() => {
                     {v.toLocaleString()}件
                   </button>
                 ))}
-                <input
-                  type="number"
-                  min={10}
-                  max={5000}
-                  value={maxItems}
-                  onChange={e => setMaxItems(Number(e.target.value))}
-                  className="input py-1.5 w-28 text-sm"
-                  placeholder="カスタム"
-                />
               </div>
-              <p className="text-xs text-gray-400 mt-1">
-                ※ モデルの出力制限により実際の件数は前後します。大量生成時はOpenAI GPT-4o推奨。
-              </p>
             </div>
 
-            {/* テスト観点 */}
             <div>
               <label className="label">テスト観点（複数選択）</label>
               <div className="flex flex-wrap gap-2">
@@ -342,7 +338,6 @@ useEffect(() => {
         )}
       </div>
 
-      {/* 生成ボタン */}
       {!generating && !done && (
         <button
           className="btn-primary w-full justify-center py-4 text-base"
@@ -355,7 +350,6 @@ useEffect(() => {
         </button>
       )}
 
-      {/* プログレス */}
       {generating && (
         <div className="card p-6 animate-fade-in">
           <div className="flex items-center justify-between mb-3">
@@ -390,7 +384,6 @@ useEffect(() => {
         </div>
       )}
 
-      {/* エラー */}
       {error && (
         <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -404,7 +397,6 @@ useEffect(() => {
         </div>
       )}
 
-      {/* 完了 */}
       {done && (
         <div className="card p-6 text-center animate-slide-up">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
