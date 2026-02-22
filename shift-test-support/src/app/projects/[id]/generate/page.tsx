@@ -11,11 +11,11 @@ import type { SiteAnalysis, PageInfo } from '@/types'
 const STAGES = [
   'RAG検索中（関連ドキュメント・サイト構造・ソースコードを取得）',
   'プロンプト構築中',
-  'AI生成中（ストリーミング）',
+  'AI生成中...',
   'テスト項目を解析・保存中',
   '完了',
 ]
-const STAGE_PROGRESS = [10, 22, 90, 97, 100]
+const STAGE_PROGRESS = [10, 22, 88, 97, 100]
 
 const PERSPECTIVE_OPTIONS = [
   { label: '機能テスト',   value: '機能テスト' },
@@ -31,8 +31,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [dataLoading, setDataLoading] = useState(true)
-
   const [maxItems, setMaxItems] = useState(300)
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
@@ -50,6 +48,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [resultCount, setResultCount] = useState(0)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef = useRef(0)
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -58,18 +57,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .then(r => r.json())
       .then(data => { if (data?.id) setSiteAnalysis(data) })
       .catch(() => {})
-      .finally(() => setDataLoading(false))
   }, [params.id])
+
+  // クリーンアップ
+  useEffect(() => () => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    if (progressTimer.current) clearInterval(progressTimer.current)
+  }, [])
 
   const animateTo = (target: number) => {
     if (progressTimer.current) clearInterval(progressTimer.current)
     progressTimer.current = setInterval(() => {
-      progressRef.current = Math.min(
-        progressRef.current + (target - progressRef.current) * 0.1 + 0.2,
-        target
-      )
+      progressRef.current = Math.min(progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target)
       setProgress(Math.round(progressRef.current * 10) / 10)
-      if (progressRef.current >= target) clearInterval(progressTimer.current!)
+      if (progressRef.current >= target - 0.1) clearInterval(progressTimer.current!)
     }, 150)
   }
 
@@ -78,25 +79,42 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
   }
 
-  /**
-   * SSEパーサー（堅牢版）
-   * 受信バッファから event/data ブロックを確実に抽出する
-   */
-  const parseSSEBuffer = (buffer: string): Array<{ event: string; data: string }> => {
-    const results: Array<{ event: string; data: string }> = []
-    // ブロックは空行2つで区切られる
-    const blocks = buffer.split(/\n\n+/)
-    for (const block of blocks) {
-      if (!block.trim()) continue
-      let event = 'message'
-      let data = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event: ')) event = line.slice(7).trim()
-        else if (line.startsWith('data: ')) data = line.slice(6).trim()
+  const startPolling = (jobId: string) => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/generate/status?jobId=${jobId}`)
+        if (!res.ok) return
+        const job = await res.json()
+
+        // ステージ・進捗を更新
+        if (typeof job.stage === 'number') {
+          setStageIdx(job.stage)
+          setStageMessage(job.message || '')
+          animateTo(STAGE_PROGRESS[Math.min(job.stage, STAGE_PROGRESS.length - 2)])
+        }
+
+        if (job.status === 'completed') {
+          clearInterval(pollingRef.current!)
+          if (progressTimer.current) clearInterval(progressTimer.current)
+          progressRef.current = 100
+          setProgress(100)
+          setStageIdx(4)
+          setResultCount(job.count ?? 0)
+          setRagBreakdown(job.breakdown ?? null)
+          setDone(true)
+          setGenerating(false)
+        } else if (job.status === 'error') {
+          clearInterval(pollingRef.current!)
+          if (progressTimer.current) clearInterval(progressTimer.current)
+          setError(job.error || 'AI生成に失敗しました')
+          setGenerating(false)
+        }
+      } catch (e) {
+        // ネットワークエラーはポーリングを継続（一時的な切断に対応）
+        console.warn('Polling error (will retry):', e)
       }
-      if (data) results.push({ event, data })
-    }
-    return results
+    }, 3000) // 3秒ごとにポーリング
   }
 
   const generate = async () => {
@@ -117,7 +135,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     animateTo(STAGE_PROGRESS[0])
 
     try {
-      const res = await fetch('/api/generate', {
+      // ジョブ開始（即座にjobIdが返る）
+      const res = await fetch('/api/generate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -128,75 +147,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         }),
       })
 
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        throw new Error((err as { error?: string }).error || 'AI生成に失敗しました')
+        throw new Error((err as { error?: string }).error || 'ジョブの開始に失敗しました')
       }
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+      const { jobId } = await res.json()
+      if (!jobId) throw new Error('ジョブIDが取得できませんでした')
 
-      while (true) {
-        const { done: streamDone, value } = await reader.read()
-        if (streamDone) break
-
-        buffer += decoder.decode(value, { stream: true })
-
-        // 完結したブロック（\n\nで終わる部分）だけ処理し、残りをバッファに保持
-        const lastDoubleNewline = buffer.lastIndexOf('\n\n')
-        if (lastDoubleNewline === -1) continue
-
-        const toProcess = buffer.slice(0, lastDoubleNewline + 2)
-        buffer = buffer.slice(lastDoubleNewline + 2)
-
-        for (const { event, data } of parseSSEBuffer(toProcess)) {
-          let parsed: Record<string, unknown>
-          try { parsed = JSON.parse(data) } catch { continue }
-
-          if (event === 'progress') {
-            const stage = typeof parsed.stage === 'number' ? parsed.stage : stageIdx
-            setStageIdx(stage)
-            setStageMessage(typeof parsed.message === 'string' ? parsed.message : '')
-            animateTo(STAGE_PROGRESS[Math.min(stage, STAGE_PROGRESS.length - 2)])
-          } else if (event === 'done') {
-            if (progressTimer.current) clearInterval(progressTimer.current)
-            progressRef.current = 100
-            setProgress(100)
-            setStageIdx(4)
-            setResultCount(typeof parsed.count === 'number' ? parsed.count : 0)
-            if (parsed.breakdown && typeof parsed.breakdown === 'object') {
-              setRagBreakdown(parsed.breakdown as { documents: number; siteAnalysis: number; sourceCode: number })
-            }
-            setDone(true)
-          } else if (event === 'error') {
-            throw new Error(typeof parsed.message === 'string' ? parsed.message : 'AI生成に失敗しました')
-          }
-        }
-      }
-
-      // バッファに残ったデータも処理
-      if (buffer.trim()) {
-        for (const { event, data } of parseSSEBuffer(buffer + '\n\n')) {
-          let parsed: Record<string, unknown>
-          try { parsed = JSON.parse(data) } catch { continue }
-          if (event === 'done' && typeof parsed.count === 'number') {
-            progressRef.current = 100
-            setProgress(100)
-            setStageIdx(4)
-            setResultCount(parsed.count)
-            setDone(true)
-          } else if (event === 'error') {
-            throw new Error(typeof parsed.message === 'string' ? parsed.message : 'AI生成に失敗しました')
-          }
-        }
-      }
+      // ポーリング開始
+      startPolling(jobId)
 
     } catch (e) {
       if (progressTimer.current) clearInterval(progressTimer.current)
       setError(e instanceof Error ? e.message : 'AI生成に失敗しました')
-    } finally {
-      if (progressTimer.current) clearInterval(progressTimer.current)
       setGenerating(false)
     }
   }
@@ -206,7 +170,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       <div>
         <h1 className="text-xl font-bold text-gray-900">AIテスト項目生成</h1>
         <p className="text-sm text-gray-500 mt-0.5">
-          アップロードされた資料・URL分析・ソースコードをRAGで活用してテスト項目を生成します
+          ドキュメント・URL分析・ソースコードをRAGで活用してテスト項目を生成します
         </p>
       </div>
 
@@ -215,9 +179,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">RAGデータ利用状況</p>
         <div className="space-y-2">
           {[
-            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,          note: 'ドキュメント管理で確認' },
-            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,         note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: false,                  note: 'ソースコード取込で確認' },
+            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,         note: 'ドキュメント管理で確認' },
+            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,        note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
+            { icon: Code2,    label: 'ソースコード',  available: false,                 note: 'ソースコード取込で確認' },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
@@ -251,12 +215,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </button>
             ))}
           </div>
-
           {targetMode === 'pages' && (
             <>
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-600">画面を選択（{selectedPages.size}件選択中）</span>
+                  <span className="text-xs font-semibold text-gray-600">画面を選択（{selectedPages.size}件）</span>
                   <div className="flex gap-3">
                     <button className="text-xs text-shift-700 hover:underline"
                       onClick={() => setSelectedPages(new Set((siteAnalysis.pages ?? []).map(p => p.url)))}>全選択</button>
@@ -299,7 +262,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           </div>
           {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
         </button>
-
         {showAdvanced && (
           <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
             <div>
@@ -309,34 +271,25 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   <button key={v} onClick={() => setMaxItems(v)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                       maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
-                    }`}>
-                    {v.toLocaleString()}件
-                  </button>
+                    }`}>{v.toLocaleString()}件</button>
                 ))}
                 <input type="number" min={10} max={5000} value={maxItems}
                   onChange={e => setMaxItems(Number(e.target.value))}
-                  className="input py-1.5 w-28 text-sm" placeholder="カスタム" />
+                  className="input py-1.5 w-28 text-sm" />
               </div>
-              <p className="text-xs text-gray-400 mt-1">※ 件数が多いほど生成時間が長くなります</p>
             </div>
             <div>
-              <label className="label">テスト観点（複数選択）</label>
+              <label className="label">テスト観点</label>
               <div className="flex flex-wrap gap-2">
                 {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
-                  <button key={value} onClick={() => {
-                    setSelectedPerspectives(prev => {
-                      const next = new Set(prev)
-                      next.has(value) ? next.delete(value) : next.add(value)
-                      return next
-                    })
-                  }}
+                  <button key={value} onClick={() => setSelectedPerspectives(prev => {
+                    const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                  })}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                       selectedPerspectives.has(value)
                         ? 'bg-shift-100 text-shift-800 border-shift-400'
                         : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                    }`}>
-                    {label}
-                  </button>
+                    }`}>{label}</button>
                 ))}
               </div>
             </div>
@@ -360,20 +313,18 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 text-shift-600 animate-spin" />
-              <span className="font-semibold text-gray-900 text-sm">AI生成中（ストリーミング）...</span>
+              <span className="font-semibold text-gray-900 text-sm">AI生成中...</span>
             </div>
             <span className="text-lg font-bold text-shift-700">{Math.round(progress)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
-            <div className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-300"
+            <div className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }} />
           </div>
           <div className="space-y-2">
             {STAGES.map((stage, i) => (
               <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${
-                i === stageIdx ? 'text-shift-700 font-semibold'
-                : i < stageIdx  ? 'text-green-600'
-                : 'text-gray-400'
+                i === stageIdx ? 'text-shift-700 font-semibold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'
               }`}>
                 {i < stageIdx
                   ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
@@ -387,6 +338,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </div>
             ))}
           </div>
+          <p className="text-xs text-gray-400 mt-4">
+            ※ 3秒ごとに進捗を確認しています。DeepSeekは生成に数分かかる場合があります。
+          </p>
         </div>
       )}
 
