@@ -68,7 +68,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   // 判定ロジックをレンダリング時に計算（page.tsxと同じ方式）
   const sourceDocs = docs.filter(d => 
-    d.category === 'source_code' && (d.status === 'completed' || d.status === '' || !d.status)
+    d.category === 'source_code' && (
+      d.status === ('completed' as any) || 
+      (d.status as string) === '' || 
+      !d.status
+    )
   )
   const hasSourceCode = sourceDocs.length > 0
   
