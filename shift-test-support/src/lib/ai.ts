@@ -1,57 +1,35 @@
-import OpenAI from 'openai'
 import type { VectorMetadata } from './vector'
 import type { TestItem } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
-function createAIClient(): { client: OpenAI; model: string } {
-  const provider = process.env.AI_PROVIDER || 'openrouter'
-  if (provider === 'openai') {
-    return {
-      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY! }),
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-    }
-  }
-  return {
-    client: new OpenAI({
-      apiKey: process.env.OPENROUTER_API_KEY!,
-      baseURL: 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': 'https://shift-test-support.vercel.app',
-        'X-Title': 'Shift AI Test Support',
-      },
-    }),
-    model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
-  }
-}
-
 export interface GenerateOptions {
   maxItems?: number
   perspectives?: string[]
-  // 画面単位指定（null = 全体）
   targetPages?: Array<{ url: string; title: string }> | null
 }
 
-export async function generateTestItems(
-  projectId: string,
+/**
+ * プロンプトを構築して返す（AIクライアントには依存しない）
+ */
+export function buildPrompts(
   projectName: string,
   targetSystem: string,
   chunks: VectorMetadata[],
   options: GenerateOptions = {}
-): Promise<TestItem[]> {
-  const { client, model } = createAIClient()
+): { systemPrompt: string; userPrompt: string } {
   const maxItems = options.maxItems || 100
   const perspectives = options.perspectives || ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']
   const targetPages = options.targetPages
 
-  // カテゴリ別にチャンクを整理
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'shift_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
   const sourceChunks = chunks.filter(c => c.category === 'source_code')
 
-  // コンテキスト構築（カテゴリ別に分けて最大6000文字）
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number) => {
     if (!list.length) return ''
-    const text = list.map((c, i) => `[${label}${i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`).join('\n\n')
+    const text = list
+      .map((c, i) => `[${label}${i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
+      .join('\n\n')
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
 
@@ -61,8 +39,7 @@ export async function generateTestItems(
     buildContext(sourceChunks, 'ソースコード',          1500),
   ].join('')
 
-  // 画面単位指定がある場合はフォーカス指示を追加
-  const pagesFocus = targetPages && targetPages.length > 0
+  const pagesFocus = targetPages?.length
     ? `\n\n## テスト対象画面（以下の画面に絞ってテスト項目を生成してください）\n${targetPages.map(p => `- ${p.title} (${p.url})`).join('\n')}`
     : ''
 
@@ -94,19 +71,13 @@ ${pagesFocus}
   }
 ]`
 
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: 0.3,
-    max_tokens: 16000,
-  })
+  return { systemPrompt, userPrompt }
+}
 
-  const content = response.choices[0]?.message?.content || '[]'
-
-  // JSONの配列部分を抽出（コードブロック対応）
+/**
+ * AIのテキスト応答をパースしてTestItem配列に変換する
+ */
+export function parseTestItems(content: string, projectId: string): TestItem[] {
   const jsonMatch = content.match(/\[[\s\S]*\]/)
   if (!jsonMatch) throw new Error(`AIの応答からJSONを抽出できませんでした。応答先頭: ${content.slice(0, 200)}`)
 
@@ -141,8 +112,10 @@ ${pagesFocus}
       precondition: item.precondition || '',
       steps: Array.isArray(item.steps) ? item.steps : [],
       expectedResult: item.expectedResult || '',
-      priority: (['HIGH', 'MEDIUM', 'LOW'].includes(item.priority) ? item.priority : 'MEDIUM') as TestItem['priority'],
-      automatable: (['YES', 'NO', 'CONSIDER'].includes(item.automatable) ? item.automatable : 'CONSIDER') as TestItem['automatable'],
+      priority: (['HIGH', 'MEDIUM', 'LOW'].includes(item.priority)
+        ? item.priority : 'MEDIUM') as TestItem['priority'],
+      automatable: (['YES', 'NO', 'CONSIDER'].includes(item.automatable)
+        ? item.automatable : 'CONSIDER') as TestItem['automatable'],
       orderIndex: idx,
       isDeleted: false,
     }
