@@ -12,6 +12,7 @@ export interface VectorMetadata {
   category: string
   chunkIndex: number
   text: string
+  [key: string]: string | number | boolean | null
 }
 
 /**
