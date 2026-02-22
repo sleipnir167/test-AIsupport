@@ -49,6 +49,31 @@ export default function SourceCodePage({ params }: { params: { id: string } }) {
       setTimeout(() => setUploadProgress(''), 3000)
     }
   }
+  
+  const handleMultipleFiles = async (files: File[]) => {
+    setUploading(true)
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      setUploadProgress(`アップロード中... (${i + 1}/${files.length}) ${file.name}`)
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('projectId', params.id)
+      formData.append('category', 'source_code')
+      formData.append('subCategory', selectedSubCategory)
+      // フォルダ構造を保持するためパスも送信
+      formData.append('relativePath', (file as any).webkitRelativePath || file.name)
+  
+      try {
+        const res = await fetch('/api/documents', { method: 'POST', body: formData })
+        const doc = await res.json()
+        setSourceDocs(prev => [doc, ...prev])
+      } catch (e) {
+        console.error('Upload error:', e)
+      }
+    }
+    setUploading(false)
+    setUploadProgress('')
+  }
 
   const removeDoc = async (id: string) => {
     if (!confirm('このソースコードを削除しますか？RAGデータも削除されます。')) return
@@ -147,7 +172,13 @@ export default function SourceCodePage({ params }: { params: { id: string } }) {
             ${uploading ? 'pointer-events-none' : ''}`}
           onDragOver={e => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
-          onDrop={e => { e.preventDefault(); setDragging(false); e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0]) }}
+          onDrop={e => {
+            e.preventDefault()
+            setDragging(false)
+            if (e.dataTransfer.files.length > 0) {
+              handleMultipleFiles(Array.from(e.dataTransfer.files))
+            }
+          }}
           onClick={() => !uploading && fileInputRef.current?.click()}
         >
           {uploading ? (
@@ -165,9 +196,20 @@ export default function SourceCodePage({ params }: { params: { id: string } }) {
               <p className="text-xs text-gray-400">最大200MB（ZIP）/ 10MB（個別ファイル）</p>
             </>
           )}
-          <input ref={fileInputRef} type="file" className="hidden"
-            accept=".zip,.js,.ts,.jsx,.tsx,.py,.java,.php,.rb,.go,.rs,.cs,.swift,.kt"
-            onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+          
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            multiple
+            {...{ webkitdirectory: '' } as any}  // TypeScriptの型エラー回避
+            onChange={e => {
+              const files = e.target.files
+              if (files && files.length > 0) {
+                handleMultipleFiles(Array.from(files))
+              }
+            }}
+          />
         </div>
       </div>
     </div>
