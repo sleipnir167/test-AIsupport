@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
   LayoutGrid, List
 } from 'lucide-react'
-import type { SiteAnalysis, PageInfo, Document } from '@/types' // Document型を追加
+import type { SiteAnalysis, PageInfo, Document } from '@/types'
 
 const STAGES = [
   { label: 'RAG検索中（関連ドキュメント・サイト構造・ソースコードを取得）', pct: 15 },
@@ -31,15 +31,16 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   // データ
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [docs, setDocs] = useState<Document[]>([]) // ドキュメント一覧を保持するように変更
+  const [docs, setDocs] = useState<Document[]>([])
   const [dataLoading, setDataLoading] = useState(true)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
   // 生成設定
   const [maxItems, setMaxItems] = useState(300)
-  const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
-    new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
-  )
+  // 割合指定（％）を管理するステートを復活
+  const [weights, setWeights] = useState({
+    functional: 30, normal: 20, error: 20, boundary: 10, security: 10, usability: 5, performance: 5
+  })
   const [targetMode, setTargetMode] = useState<'all' | 'pages'>('all')
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -52,7 +53,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
 
-  // 修正ポイント：Promise.allでデータを一括取得
   useEffect(() => {
     Promise.all([
       fetch(`/api/site-analysis?projectId=${params.id}`).then(r => r.json()),
@@ -66,7 +66,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .finally(() => setDataLoading(false))
   }, [params.id])
 
-  // 判定ロジックをレンダリング時に計算（page.tsxと同じ方式）
   const sourceDocs = docs.filter(d => 
     d.category === 'source_code' && (
       d.status === ('completed' as any) || 
@@ -75,19 +74,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     )
   )
   const hasSourceCode = sourceDocs.length > 0
-  
-  // 通常ドキュメント（ソースコード以外）の存在確認
   const hasDocuments = docs.some(d => d.category !== 'source_code')
-
-  const togglePerspective = (value: string) => {
-    setSelectedPerspectives(prev => {
-      const next = new Set(prev)
-      next.has(value) ? next.delete(value) : next.add(value)
-      return next
-    })
-  }
-
-  // ... (togglePage, getTargetPages, generate 関数は変更なしのため中略) ...
 
   const togglePage = (url: string) => {
     setSelectedPages(prev => {
@@ -116,6 +103,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setError('')
     setRagBreakdown(null)
 
+    // 0%以上の観点のみをラベル配列として抽出
+    const perspectives = PERSPECTIVE_KEYS
+      .filter(p => weights[p.key as keyof typeof weights] > 0)
+      .map(p => p.value)
+
     const interval = setInterval(() => {
       setProgress(p => Math.min(p + (88 - p) * 0.04 + 0.2, 88))
     }, 400)
@@ -132,8 +124,10 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         body: JSON.stringify({
           projectId: params.id,
           maxItems,
-          perspectives: Array.from(selectedPerspectives),
+          perspectives,
           targetPages,
+          // サーバー側で詳細な重み付けを利用する場合は weights も渡す
+          weights 
         }),
       })
       const data = await res.json()
@@ -188,7 +182,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               icon: Code2,    
               label: 'ソースコード',  
               available: hasSourceCode, 
-              // 修正：件数を表示するように変更
               note: hasSourceCode ? `${sourceDocs.length}件取込済` : 'ソースコード取込で確認' 
             },
           ].map(({ icon: Icon, label, available, note }) => (
@@ -203,7 +196,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* ... (以下、生成対象・詳細設定などの表示部分は変更なし) ... */}
       {/* 生成対象：画面選択 */}
       {siteAnalysis && (
         <div className="card p-5">
@@ -320,23 +312,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </div>
             </div>
 
+            {/* 修正：スライダーによる重み付け復活 */}
             <div>
-              <label className="label">テスト観点（複数選択）</label>
-              <div className="flex flex-wrap gap-2">
-                {PERSPECTIVE_KEYS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => togglePerspective(value)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      selectedPerspectives.has(value)
-                        ? 'bg-shift-100 text-shift-800 border-shift-400'
-                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    {label}
-                  </button>
+              <label className="label mb-3">テスト観点の重み付け</label>
+              <div className="space-y-4">
+                {PERSPECTIVE_KEYS.map(({ key, label }) => (
+                  <div key={key} className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-medium text-gray-700">{label}</span>
+                      <span className="text-xs font-bold text-shift-700">
+                        {weights[key as keyof typeof weights]}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={weights[key as keyof typeof weights]}
+                      onChange={e => setWeights(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+                      className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-shift-700"
+                    />
+                  </div>
                 ))}
               </div>
+              <p className="text-[10px] text-gray-400 mt-2">※ 0%に設定した観点は生成対象から除外されます</p>
             </div>
           </div>
         )}
