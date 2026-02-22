@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Sparkles, Play, CheckCircle2, AlertCircle, Settings,
+  Sparkles, CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
   LayoutGrid, List
 } from 'lucide-react'
@@ -15,15 +15,16 @@ const STAGES = [
   'テスト項目を解析・保存中',
   '完了',
 ]
+const STAGE_PROGRESS = [10, 22, 90, 97, 100]
 
 const PERSPECTIVE_OPTIONS = [
-  { label: '機能テスト', value: '機能テスト' },
-  { label: '正常系',     value: '正常系' },
-  { label: '異常系',     value: '異常系' },
-  { label: '境界値',     value: '境界値' },
+  { label: '機能テスト',   value: '機能テスト' },
+  { label: '正常系',       value: '正常系' },
+  { label: '異常系',       value: '異常系' },
+  { label: '境界値',       value: '境界値' },
   { label: 'セキュリティ', value: 'セキュリティ' },
-  { label: '操作性',     value: '操作性' },
-  { label: '性能',       value: '性能' },
+  { label: '操作性',       value: '操作性' },
+  { label: '性能',         value: '性能' },
 ]
 
 export default function GeneratePage({ params }: { params: { id: string } }) {
@@ -32,7 +33,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
   const [dataLoading, setDataLoading] = useState(true)
 
-  // 生成設定
   const [maxItems, setMaxItems] = useState(300)
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
@@ -41,7 +41,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  // 生成状態
   const [generating, setGenerating] = useState(false)
   const [stageIdx, setStageIdx] = useState(0)
   const [stageMessage, setStageMessage] = useState('')
@@ -51,7 +50,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [resultCount, setResultCount] = useState(0)
   const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
 
-  const progressTimer = useRef<NodeJS.Timeout | null>(null)
+  const progressRef = useRef(0)
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     fetch(`/api/site-analysis?projectId=${params.id}`)
@@ -61,32 +61,42 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .finally(() => setDataLoading(false))
   }, [params.id])
 
-  const togglePerspective = (value: string) =>
-    setSelectedPerspectives(prev => {
-      const next = new Set(prev)
-      next.has(value) ? next.delete(value) : next.add(value)
-      return next
-    })
+  const animateTo = (target: number) => {
+    if (progressTimer.current) clearInterval(progressTimer.current)
+    progressTimer.current = setInterval(() => {
+      progressRef.current = Math.min(
+        progressRef.current + (target - progressRef.current) * 0.1 + 0.2,
+        target
+      )
+      setProgress(Math.round(progressRef.current * 10) / 10)
+      if (progressRef.current >= target) clearInterval(progressTimer.current!)
+    }, 150)
+  }
 
   const getTargetPages = (): PageInfo[] | null => {
     if (targetMode === 'all' || !siteAnalysis) return null
     return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
   }
 
-  // ステージに応じたプログレスターゲット
-  const STAGE_PROGRESS = [15, 25, 88, 98, 100]
-
-  const animateProgressTo = (target: number) => {
-    if (progressTimer.current) clearInterval(progressTimer.current)
-    progressTimer.current = setInterval(() => {
-      setProgress(p => {
-        if (p >= target) {
-          clearInterval(progressTimer.current!)
-          return target
-        }
-        return p + (target - p) * 0.08 + 0.3
-      })
-    }, 200)
+  /**
+   * SSEパーサー（堅牢版）
+   * 受信バッファから event/data ブロックを確実に抽出する
+   */
+  const parseSSEBuffer = (buffer: string): Array<{ event: string; data: string }> => {
+    const results: Array<{ event: string; data: string }> = []
+    // ブロックは空行2つで区切られる
+    const blocks = buffer.split(/\n\n+/)
+    for (const block of blocks) {
+      if (!block.trim()) continue
+      let event = 'message'
+      let data = ''
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim()
+        else if (line.startsWith('data: ')) data = line.slice(6).trim()
+      }
+      if (data) results.push({ event, data })
+    }
+    return results
   }
 
   const generate = async () => {
@@ -97,14 +107,14 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     }
 
     setGenerating(true)
+    progressRef.current = 0
     setProgress(0)
     setStageIdx(0)
     setStageMessage('')
     setDone(false)
     setError('')
     setRagBreakdown(null)
-
-    animateProgressTo(STAGE_PROGRESS[0])
+    animateTo(STAGE_PROGRESS[0])
 
     try {
       const res = await fetch('/api/generate', {
@@ -120,10 +130,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || 'AI生成に失敗しました')
+        throw new Error((err as { error?: string }).error || 'AI生成に失敗しました')
       }
 
-      // SSEを読み取る
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -133,58 +142,54 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         if (streamDone) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) continue // eventラインは次のdataと一緒に処理
-          if (!line.startsWith('data: ')) continue
+        // 完結したブロック（\n\nで終わる部分）だけ処理し、残りをバッファに保持
+        const lastDoubleNewline = buffer.lastIndexOf('\n\n')
+        if (lastDoubleNewline === -1) continue
 
-          const rawData = line.slice(6).trim()
-          if (!rawData) continue
+        const toProcess = buffer.slice(0, lastDoubleNewline + 2)
+        buffer = buffer.slice(lastDoubleNewline + 2)
 
-          // eventタイプを前の行から取得（簡易パース）
-          const eventLine = lines[lines.indexOf(line) - 1] ?? ''
-          const eventType = eventLine.startsWith('event: ')
-            ? eventLine.slice(7).trim()
-            : 'progress'
+        for (const { event, data } of parseSSEBuffer(toProcess)) {
+          let parsed: Record<string, unknown>
+          try { parsed = JSON.parse(data) } catch { continue }
 
-          try {
-            const data = JSON.parse(rawData)
-
-            if (eventType === 'progress' || data.stage !== undefined) {
-              const stage = data.stage ?? stageIdx
-              setStageIdx(stage)
-              setStageMessage(data.message ?? '')
-              animateProgressTo(STAGE_PROGRESS[Math.min(stage, STAGE_PROGRESS.length - 1)])
-            } else if (eventType === 'done' || data.count !== undefined) {
-              if (progressTimer.current) clearInterval(progressTimer.current)
-              setProgress(100)
-              setStageIdx(4)
-              setResultCount(data.count)
-              setRagBreakdown(data.breakdown)
-              setDone(true)
-            } else if (eventType === 'error' || data.message) {
-              throw new Error(data.message)
+          if (event === 'progress') {
+            const stage = typeof parsed.stage === 'number' ? parsed.stage : stageIdx
+            setStageIdx(stage)
+            setStageMessage(typeof parsed.message === 'string' ? parsed.message : '')
+            animateTo(STAGE_PROGRESS[Math.min(stage, STAGE_PROGRESS.length - 2)])
+          } else if (event === 'done') {
+            if (progressTimer.current) clearInterval(progressTimer.current)
+            progressRef.current = 100
+            setProgress(100)
+            setStageIdx(4)
+            setResultCount(typeof parsed.count === 'number' ? parsed.count : 0)
+            if (parsed.breakdown && typeof parsed.breakdown === 'object') {
+              setRagBreakdown(parsed.breakdown as { documents: number; siteAnalysis: number; sourceCode: number })
             }
-          } catch (parseErr) {
-            // JSONパースエラーは無視して続行
+            setDone(true)
+          } else if (event === 'error') {
+            throw new Error(typeof parsed.message === 'string' ? parsed.message : 'AI生成に失敗しました')
           }
         }
       }
 
-      // バッファに残ったデータを処理
-      if (buffer.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(buffer.slice(6).trim())
-          if (data.count !== undefined) {
+      // バッファに残ったデータも処理
+      if (buffer.trim()) {
+        for (const { event, data } of parseSSEBuffer(buffer + '\n\n')) {
+          let parsed: Record<string, unknown>
+          try { parsed = JSON.parse(data) } catch { continue }
+          if (event === 'done' && typeof parsed.count === 'number') {
+            progressRef.current = 100
             setProgress(100)
             setStageIdx(4)
-            setResultCount(data.count)
-            setRagBreakdown(data.breakdown)
+            setResultCount(parsed.count)
             setDone(true)
+          } else if (event === 'error') {
+            throw new Error(typeof parsed.message === 'string' ? parsed.message : 'AI生成に失敗しました')
           }
-        } catch {}
+        }
       }
 
     } catch (e) {
@@ -210,9 +215,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">RAGデータ利用状況</p>
         <div className="space-y-2">
           {[
-            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,           note: 'ドキュメント管理で確認' },
-            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,          note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: false,                   note: 'ソースコード取込で確認' },
+            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,          note: 'ドキュメント管理で確認' },
+            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,         note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
+            { icon: Code2,    label: 'ソースコード',  available: false,                  note: 'ソースコード取込で確認' },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
@@ -225,22 +230,19 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* 画面単位選択（URL分析済みの場合のみ） */}
+      {/* 画面単位選択 */}
       {siteAnalysis && (
         <div className="card p-5">
           <p className="text-sm font-semibold text-gray-900 mb-3">生成対象</p>
           <div className="grid grid-cols-2 gap-3 mb-4">
             {[
-              { mode: 'all'   as const, icon: List,       label: '全体を対象',       desc: 'すべての資料・画面を対象に生成' },
-              { mode: 'pages' as const, icon: LayoutGrid, label: '画面単位で指定',   desc: '特定の画面に絞って生成・追記' },
+              { mode: 'all'   as const, icon: List,       label: '全体を対象',     desc: 'すべての資料・画面を対象に生成' },
+              { mode: 'pages' as const, icon: LayoutGrid, label: '画面単位で指定', desc: '特定の画面に絞って生成・追記' },
             ].map(({ mode, icon: Icon, label, desc }) => (
-              <button
-                key={mode}
-                onClick={() => setTargetMode(mode)}
+              <button key={mode} onClick={() => setTargetMode(mode)}
                 className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left transition-all ${
                   targetMode === mode ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
+                }`}>
                 <Icon className={`w-4 h-4 ${targetMode === mode ? 'text-shift-700' : 'text-gray-400'}`} />
                 <div>
                   <p className={`text-sm font-semibold ${targetMode === mode ? 'text-shift-800' : 'text-gray-700'}`}>{label}</p>
@@ -257,44 +259,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   <span className="text-xs font-semibold text-gray-600">画面を選択（{selectedPages.size}件選択中）</span>
                   <div className="flex gap-3">
                     <button className="text-xs text-shift-700 hover:underline"
-                      onClick={() => setSelectedPages(new Set((siteAnalysis.pages ?? []).map(p => p.url)))}>
-                      全選択
-                    </button>
+                      onClick={() => setSelectedPages(new Set((siteAnalysis.pages ?? []).map(p => p.url)))}>全選択</button>
                     <button className="text-xs text-gray-500 hover:underline"
-                      onClick={() => setSelectedPages(new Set())}>
-                      全解除
-                    </button>
+                      onClick={() => setSelectedPages(new Set())}>全解除</button>
                   </div>
                 </div>
                 <div className="max-h-60 overflow-y-auto divide-y divide-gray-100">
                   {(siteAnalysis.pages ?? []).map(page => (
                     <label key={page.url} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer">
-                      <input
-                        type="checkbox"
+                      <input type="checkbox" className="w-4 h-4 accent-shift-700 flex-shrink-0"
                         checked={selectedPages.has(page.url)}
-                        onChange={() => {
-                          setSelectedPages(prev => {
-                            const next = new Set(prev)
-                            next.has(page.url) ? next.delete(page.url) : next.add(page.url)
-                            return next
-                          })
-                        }}
-                        className="w-4 h-4 accent-shift-700 flex-shrink-0"
-                      />
+                        onChange={() => setSelectedPages(prev => {
+                          const next = new Set(prev)
+                          next.has(page.url) ? next.delete(page.url) : next.add(page.url)
+                          return next
+                        })} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{page.title}</p>
                         <p className="text-xs text-gray-400 font-mono truncate">{page.url}</p>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        F:{page.forms} B:{page.buttons}
-                      </span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">F:{page.forms} B:{page.buttons}</span>
                     </label>
                   ))}
                 </div>
               </div>
-              <p className="text-xs text-amber-600 mt-2">
-                ※ 画面単位モードは既存のテスト項目に追記されます
-              </p>
+              <p className="text-xs text-amber-600 mt-2">※ 画面単位モードは既存のテスト項目に追記されます</p>
             </>
           )}
         </div>
@@ -302,10 +291,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
       {/* 詳細設定 */}
       <div className="card">
-        <button
-          className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
+        <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+          onClick={() => setShowAdvanced(!showAdvanced)}>
           <div className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-gray-500" />
             <span className="font-semibold text-gray-900 text-sm">生成パラメータ</span>
@@ -321,9 +308,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                 {[100, 200, 300, 500, 1000, 2000].map(v => (
                   <button key={v} onClick={() => setMaxItems(v)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      maxItems === v
-                        ? 'bg-shift-800 text-white border-shift-800'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
+                      maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
                     }`}>
                     {v.toLocaleString()}件
                   </button>
@@ -332,16 +317,19 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   onChange={e => setMaxItems(Number(e.target.value))}
                   className="input py-1.5 w-28 text-sm" placeholder="カスタム" />
               </div>
-              <p className="text-xs text-gray-400 mt-1">
-                ※ 件数が多いほど生成時間が長くなります。大量生成時はOpenAI GPT-4o推奨。
-              </p>
+              <p className="text-xs text-gray-400 mt-1">※ 件数が多いほど生成時間が長くなります</p>
             </div>
-
             <div>
               <label className="label">テスト観点（複数選択）</label>
               <div className="flex flex-wrap gap-2">
                 {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
-                  <button key={value} onClick={() => togglePerspective(value)}
+                  <button key={value} onClick={() => {
+                    setSelectedPerspectives(prev => {
+                      const next = new Set(prev)
+                      next.has(value) ? next.delete(value) : next.add(value)
+                      return next
+                    })
+                  }}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                       selectedPerspectives.has(value)
                         ? 'bg-shift-100 text-shift-800 border-shift-400'
@@ -377,16 +365,14 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <span className="text-lg font-bold text-shift-700">{Math.round(progress)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
-            <div
-              className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
+            <div className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }} />
           </div>
           <div className="space-y-2">
             {STAGES.map((stage, i) => (
               <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${
                 i === stageIdx ? 'text-shift-700 font-semibold'
-                : i < stageIdx ? 'text-green-600'
+                : i < stageIdx  ? 'text-green-600'
                 : 'text-gray-400'
               }`}>
                 {i < stageIdx
@@ -426,13 +412,13 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <p className="text-sm text-gray-600 mb-3">{resultCount.toLocaleString()}件のテスト項目を生成しました</p>
           {ragBreakdown && (
             <div className="flex justify-center gap-4 text-xs text-gray-500 mb-5">
-              <span>📄 ドキュメント: {ragBreakdown.documents}チャンク</span>
-              <span>🌐 サイト構造: {ragBreakdown.siteAnalysis}チャンク</span>
-              <span>💻 ソースコード: {ragBreakdown.sourceCode}チャンク</span>
+              <span>📄 Doc: {ragBreakdown.documents}</span>
+              <span>🌐 Site: {ragBreakdown.siteAnalysis}</span>
+              <span>💻 Src: {ragBreakdown.sourceCode}</span>
             </div>
           )}
           <div className="flex gap-3 justify-center">
-            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0) }}>
+            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0); progressRef.current = 0 }}>
               再生成する
             </button>
             <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
