@@ -33,12 +33,12 @@ export function buildPrompts(
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
 
-  // GPT-4o-mini / Geminiは128k以上のコンテキストを持つため、大きめに設定
-  // DeepSeekも64k以上あるため問題なし
+  // コンテキストサイズ：1回のAI呼び出しが20〜30秒で完了するよう調整
+  // 大きすぎるとAIの応答生成に時間がかかり、60秒タイムアウトで打ち切られる
   const contextText = [
-    buildContext(docChunks,    '仕様・要件ドキュメント', 20000),
-    buildContext(siteChunks,   'サイト構造・画面情報',   8000),
-    buildContext(sourceChunks, 'ソースコード',           15000),
+    buildContext(docChunks,    '仕様・要件ドキュメント', 6000),
+    buildContext(siteChunks,   'サイト構造・画面情報',   3000),
+    buildContext(sourceChunks, 'ソースコード',           5000),
   ].join('')
 
   const pagesFocus = targetPages?.length
@@ -52,7 +52,7 @@ export function buildPrompts(
   const userPrompt = `プロジェクト名: ${projectName}
 テスト対象システム: ${targetSystem}
 テスト観点: ${perspectives.join('、')}
-生成件数: ${maxItems}件程度（超えても構いません）
+生成件数: ${maxItems}件（必ず${maxItems}件以上出力してください。少なすぎる場合は網羅性が不足しています）
 ${pagesFocus}
 
 【参考資料（RAG検索結果）】${contextText || '\n※ 参考資料なし。一般的なWebシステムとして生成してください。'}
