@@ -232,16 +232,17 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setGenerating(true)
     progressRef.current = 0
     setProgress(0)
-    setStageIdx(0)
+    setStageIdx(1)
     setStageMessage('ジョブを登録中...')
     setDone(false)
     setIsPartial(false)
     setError('')
     setJobDebug(null)
     jobIdRef.current = null
-    animateTo(5)
+    animateTo(8)
 
     try {
+      // Step1: jobId取得 & バッチ設定を受け取る
       const startRes = await fetch('/api/generate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -254,28 +255,85 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         }),
       })
 
-      const data = await startRes.json()
-      console.log('[generate] /start response:', data)
+      const startData = await startRes.json()
+      if (!startData.jobId) throw new Error(startData.error || 'jobIdが返されませんでした')
 
-      if (!data.jobId) throw new Error(data.error || 'jobIdが返されませんでした')
-      jobIdRef.current = data.jobId
+      const { jobId, totalBatches, batchSize, perspectives: persp, modelOverride } = startData
+      jobIdRef.current = jobId
 
-      if (data.status === 'completed') {
-        // 完了済みならstatusを取得して完了処理
-        const statusRes = await fetch(`/api/generate/status?jobId=${data.jobId}`)
-        const job: JobDebug = await statusRes.json()
-        finishSuccess(job)
-        return
+      // Step2: バッチを順番に実行
+      let totalGenerated = 0
+      let isTimeout = false
+
+      for (let batch = 1; batch <= totalBatches; batch++) {
+        const remaining = maxItems - totalGenerated
+        if (remaining <= 0) break
+
+        const currentBatch = Math.min(batchSize, remaining)
+        const progressPct = 10 + ((batch - 1) / totalBatches) * 75
+        animateTo(progressPct)
+        setStageIdx(2)
+        setStageMessage(`バッチ ${batch}/${totalBatches} 実行中（${totalGenerated}件生成済）`)
+
+        // 各バッチのfetchをawaitする（完了するまで待つ）
+        const batchRes = await fetch('/api/generate/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jobId,
+            projectId: params.id,
+            batchNum: batch,
+            totalBatches,
+            batchSize: currentBatch,
+            alreadyCount: totalGenerated,
+            perspectives: persp,
+            targetPages,
+            modelOverride,
+          }),
+        })
+
+        const batchData = await batchRes.json()
+        console.log(`[batch ${batch}/${totalBatches}]`, batchData)
+
+        if (!batchRes.ok || batchData.error) {
+          throw new Error(`バッチ${batch}でエラー: ${batchData.error}`)
+        }
+
+        totalGenerated += batchData.count ?? 0
+
+        if (batchData.aborted) {
+          isTimeout = true
+          console.warn(`Batch ${batch} was aborted (timeout)`)
+          break
+        }
       }
-      if (data.status === 'error') {
-        const statusRes = await fetch(`/api/generate/status?jobId=${data.jobId}`)
-        const job: JobDebug = await statusRes.json()
-        finishError(data.error || 'AI生成に失敗しました', job)
-        return
-      }
 
-      animateTo(STAGE_PROGRESS[0])
-      startPolling(data.jobId)
+      // Step3: 完了処理
+      animateTo(97)
+      setStageIdx(3)
+      setStageMessage('完了処理中...')
+
+      // KVのジョブを完了状態に更新
+      await fetch('/api/generate/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          projectId: params.id,
+          count: totalGenerated,
+          isPartial: isTimeout,
+          targetPages,
+        }),
+      }).catch(() => {}) // 失敗しても続行
+
+      const finalJob: JobDebug = {
+        status: 'completed',
+        stage: 4,
+        message: isTimeout ? `タイムアウトのため途中保存（${totalGenerated}件）` : `完了（${totalGenerated}件）`,
+        count: totalGenerated,
+        isPartial: isTimeout,
+      }
+      finishSuccess(finalJob)
 
     } catch (e) {
       console.error('[generate] error:', e)
