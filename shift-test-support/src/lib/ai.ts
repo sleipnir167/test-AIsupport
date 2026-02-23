@@ -43,9 +43,9 @@ export function buildPrompts(
   // コンテキストサイズ：Gemini等の高速モデルは大きくても問題ない
   // GPT-4o-miniの場合は大きすぎると60秒タイムアウトになるが、バッチ方式のため許容
   const contextText = [
-    buildContext(docChunks,    '仕様・要件ドキュメント', 60000),
-    buildContext(siteChunks,   'サイト構造・画面情報',   15000),
-    buildContext(sourceChunks, 'ソースコード',           50000),
+    buildContext(docChunks,    '仕様・要件ドキュメント', 10000),
+    buildContext(siteChunks,   'サイト構造・画面情報',    4000),
+    buildContext(sourceChunks, 'ソースコード',            8000),
   ].join('')
 
   const pagesFocus = targetPages?.length

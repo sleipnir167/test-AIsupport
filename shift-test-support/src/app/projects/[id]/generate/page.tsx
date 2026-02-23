@@ -141,15 +141,23 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [sourceCodeCount, setSourceCodeCount] = useState(0)   // 取込済みソースコード件数
-  const [sourceCodeChunks, setSourceCodeChunks] = useState(0) // 取込済みチャンク数
+  const [sourceCodeCount, setSourceCodeCount] = useState(0)
+  const [sourceCodeChunks, setSourceCodeChunks] = useState(0)
   const [maxItems, setMaxItems] = useState(100)
+  const [batchSizePerCall, setBatchSizePerCall] = useState(50) // 1回のAI呼び出しで生成する件数
+  // RAG取得チャンク数
+  const [ragTopKDoc, setRagTopKDoc] = useState(100)
+  const [ragTopKSite, setRagTopKSite] = useState(40)
+  const [ragTopKSrc, setRagTopKSrc] = useState(100)
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
   )
   // テスト観点ごとの件数配分（スライダー）
-  const [perspectiveMode, setPerspectiveMode] = useState<'equal' | 'weighted'>('equal')
+  const [perspectiveMode, setPerspectiveMode] = useState<'ai' | 'percent' | 'weighted'>('ai')
   const [perspectiveWeights, setPerspectiveWeights] = useState<Record<string, number>>({
+    '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10
+  })
+  const [perspectivePercents, setPerspectivePercents] = useState<Record<string, number>>({
     '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10
   })
   const [targetMode, setTargetMode] = useState<'all' | 'pages'>('all')
@@ -280,7 +288,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     animateTo(8)
 
     try {
-      // Step1: jobId取得 & バッチ設定を受け取る
+      // Step1: jobId取得
       const startRes = await fetch('/api/generate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -296,15 +304,30 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       const startData = await startRes.json()
       if (!startData.jobId) throw new Error(startData.error || 'jobIdが返されませんでした')
 
-      const { jobId, totalBatches, batchSize, perspectives: persp, modelOverride } = startData
+      const { jobId, modelOverride } = startData
       jobIdRef.current = jobId
 
+      // フロント側でバッチ数を計算（batchSizePerCallはUI設定値を使用）
+      const effectiveBatchSize = batchSizePerCall
+      const totalBatches = Math.ceil(maxItems / effectiveBatchSize)
+
       // 観点の重み付けを計算
-      const weightedPersp = perspectiveMode === 'weighted'
-        ? Array.from(selectedPerspectives)
+      const getWeightedPersp = (batchSz: number) => {
+        if (perspectiveMode === 'weighted') {
+          return Array.from(selectedPerspectives)
             .filter(p => (perspectiveWeights[p] ?? 0) > 0)
-            .map(p => ({ value: p, count: Math.round((perspectiveWeights[p] ?? 0) / 100 * batchSize) }))
-        : undefined
+            .map(p => ({ value: p, count: Math.round((perspectiveWeights[p] ?? 0) / 100 * batchSz) }))
+        }
+        if (perspectiveMode === 'percent') {
+          const totalPct = PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value))
+            .reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0) || 100
+          return Array.from(selectedPerspectives).map(p => ({
+            value: p,
+            count: Math.round(((perspectivePercents[p] ?? 0) / totalPct) * batchSz)
+          })).filter(w => w.count > 0)
+        }
+        return undefined // AIに任せる
+      }
 
       // Step2: バッチを順番に実行
       let totalGenerated = 0
@@ -316,13 +339,12 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         const remaining = maxItems - totalGenerated
         if (remaining <= 0) break
 
-        const currentBatch = Math.min(batchSize, remaining)
+        const currentBatch = Math.min(effectiveBatchSize, remaining)
         const progressPct = 10 + ((batch - 1) / totalBatches) * 75
         animateTo(progressPct)
         setStageIdx(2)
         setStageMessage(`バッチ ${batch}/${totalBatches} 実行中（${totalGenerated}件生成済）`)
 
-        // 各バッチのfetchをawaitする（完了するまで待つ）
         const batchRes = await fetch('/api/generate/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -333,10 +355,12 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             totalBatches,
             batchSize: currentBatch,
             alreadyCount: totalGenerated,
-            perspectives: persp,
-            perspectiveWeights: weightedPersp,
+            perspectives: perspectiveMode === 'ai' ? Array.from(selectedPerspectives) : undefined,
+            perspectiveWeights: getWeightedPersp(currentBatch),
             targetPages,
             modelOverride,
+            // RAGチャンク数をフロントから指定
+            ragTopK: { doc: ragTopKDoc, site: ragTopKSite, src: ragTopKSrc },
           }),
         })
 
@@ -596,10 +620,12 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
         </button>
         {showAdvanced && (
-          <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
+          <div className="px-4 pb-4 space-y-6 border-t border-gray-100 pt-4">
+
+            {/* 最大生成件数 */}
             <div>
               <label className="label">最大生成件数</label>
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex gap-2 flex-wrap items-center">
                 {[50, 100, 200, 300, 500].map(v => (
                   <button key={v} onClick={() => setMaxItems(v)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
@@ -610,18 +636,64 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   onChange={e => setMaxItems(Number(e.target.value))}
                   className="input py-1.5 w-28 text-sm" />
               </div>
-              <p className="text-xs text-gray-400 mt-1">⚠️ Vercel無料プランは60秒制限。DeepSeekは <strong>50〜100件推奨</strong>。爆速モデルなら300件以上も可能。</p>
             </div>
+
+            {/* 1バッチあたりの生成件数 */}
             <div>
-              <label className="label">テスト観点</label>
-              {/* モード切替 */}
+              <label className="label">1回のAI呼び出しで生成する件数</label>
+              <p className="text-xs text-gray-400 mb-2">
+                最大{maxItems}件 ÷ {batchSizePerCall}件 = <strong className="text-shift-700">{Math.ceil(maxItems / batchSizePerCall)}バッチ</strong>実行されます
+              </p>
+              <div className="flex gap-2 flex-wrap items-center">
+                {[25, 50, 75, 100].map(v => (
+                  <button key={v} onClick={() => setBatchSizePerCall(v)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${batchSizePerCall === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
+                    {v}件
+                  </button>
+                ))}
+                <input type="number" min={10} max={200} value={batchSizePerCall}
+                  onChange={e => setBatchSizePerCall(Number(e.target.value))}
+                  className="input py-1.5 w-28 text-sm" />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">⚠️ Vercel無料プランは60秒/リクエスト制限。爆速モデルなら100件/バッチも可。DeepSeekは50件以下推奨。</p>
+            </div>
+
+            {/* RAGチャンク数 */}
+            <div>
+              <label className="label">RAG取得チャンク数</label>
+              <p className="text-xs text-gray-400 mb-3">多いほど参照情報が増えますが、プロンプトが長くなり生成が遅くなります</p>
+              <div className="space-y-3">
+                {[
+                  { label: '📄 ドキュメント', value: ragTopKDoc, setter: setRagTopKDoc, max: 200 },
+                  { label: '🌐 サイト構造',   value: ragTopKSite, setter: setRagTopKSite, max: 100 },
+                  { label: '💻 ソースコード', value: ragTopKSrc, setter: setRagTopKSrc, max: 200 },
+                ].map(({ label, value, setter, max }) => (
+                  <div key={label} className="flex items-center gap-3">
+                    <span className="w-28 text-xs text-gray-600 flex-shrink-0">{label}</span>
+                    <input type="range" min={0} max={max} step={10}
+                      value={value}
+                      onChange={e => setter(Number(e.target.value))}
+                      className="flex-1 accent-shift-700" />
+                    <input type="number" min={0} max={max} value={value}
+                      onChange={e => setter(Number(e.target.value))}
+                      className="input py-1 w-16 text-xs text-right" />
+                    <span className="text-xs text-gray-400">件</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* テスト観点 */}
+            <div>
+              <label className="label">テスト観点の配分</label>
               <div className="flex gap-2 mb-3">
                 {[
-                  { mode: 'equal' as const,    label: '均等配分' },
+                  { mode: 'ai'       as const, label: 'おすすめ（AI任せ）' },
+                  { mode: 'percent'  as const, label: '割合指定 (%)' },
                   { mode: 'weighted' as const, label: '件数指定' },
                 ].map(({ mode, label }) => (
                   <button key={mode} onClick={() => setPerspectiveMode(mode)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                       perspectiveMode === mode
                         ? 'bg-shift-800 text-white border-shift-800'
                         : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
@@ -629,51 +701,83 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                 ))}
               </div>
 
-              {perspectiveMode === 'equal' ? (
-                /* 均等配分：従来のトグルボタン */
-                <div className="flex flex-wrap gap-2">
-                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
-                    <button key={value} onClick={() => setSelectedPerspectives(prev => {
-                      const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                    })}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                        selectedPerspectives.has(value)
-                          ? 'bg-shift-100 text-shift-800 border-shift-400'
-                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                      }`}>{label}</button>
-                  ))}
+              {perspectiveMode === 'ai' && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-2">AIが仕様書の内容から最適な観点と配分を判断します</p>
+                  <div className="flex flex-wrap gap-2">
+                    {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
+                      <button key={value} onClick={() => setSelectedPerspectives(prev => {
+                        const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                      })}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
+                          selectedPerspectives.has(value)
+                            ? 'bg-shift-100 text-shift-800 border-shift-400'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                        }`}>{label}</button>
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                /* 件数指定：スライダー */
+              )}
+
+              {perspectiveMode === 'percent' && (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-400">
+                    合計: <span className={`font-semibold ${
+                      Math.abs(PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0) - 100) < 1
+                        ? 'text-green-600' : 'text-amber-600'
+                    }`}>
+                      {PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0)}%
+                    </span>
+                    <span className="ml-1">（合計100%になるよう調整してください）</span>
+                  </p>
+                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
+                    const enabled = selectedPerspectives.has(value)
+                    const pct = perspectivePercents[value] ?? 0
+                    const estCount = Math.round(maxItems * pct / 100)
+                    return (
+                      <div key={value} className="flex items-center gap-3">
+                        <button onClick={() => setSelectedPerspectives(prev => {
+                          const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                        })}
+                          className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium transition-all ${
+                            enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'
+                          }`}>{label}</button>
+                        <input type="range" min={0} max={100} step={5}
+                          value={pct} disabled={!enabled}
+                          onChange={e => setPerspectivePercents(prev => ({ ...prev, [value]: Number(e.target.value) }))}
+                          className="flex-1 accent-shift-700 disabled:opacity-30" />
+                        <span className={`w-20 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>
+                          {enabled ? `${pct}% ≈${estCount}件` : 'OFF'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {perspectiveMode === 'weighted' && (
                 <div className="space-y-3">
                   <p className="text-xs text-gray-400">
                     合計: <span className="font-semibold text-shift-700">
-                      {PERSPECTIVE_OPTIONS
-                        .filter(p => selectedPerspectives.has(p.value))
-                        .reduce((s, p) => s + (perspectiveWeights[p.value] ?? 0), 0)}件
+                      {PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectiveWeights[p.value] ?? 0), 0)}件
                     </span>
-                    （合計が最大生成件数の目安になります）
+                    （各バッチ内での配分に使用されます）
                   </p>
                   {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
                     const enabled = selectedPerspectives.has(value)
                     const count = perspectiveWeights[value] ?? 0
                     return (
                       <div key={value} className="flex items-center gap-3">
-                        <button
-                          onClick={() => setSelectedPerspectives(prev => {
-                            const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                          })}
+                        <button onClick={() => setSelectedPerspectives(prev => {
+                          const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                        })}
                           className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium transition-all ${
                             enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'
-                          }`}
-                        >{label}</button>
-                        <input
-                          type="range" min={0} max={200} step={5}
-                          value={count}
-                          disabled={!enabled}
+                          }`}>{label}</button>
+                        <input type="range" min={0} max={200} step={5}
+                          value={count} disabled={!enabled}
                           onChange={e => setPerspectiveWeights(prev => ({ ...prev, [value]: Number(e.target.value) }))}
-                          className="flex-1 accent-shift-700 disabled:opacity-30"
-                        />
+                          className="flex-1 accent-shift-700 disabled:opacity-30" />
                         <span className={`w-12 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>
                           {enabled ? `${count}件` : 'OFF'}
                         </span>

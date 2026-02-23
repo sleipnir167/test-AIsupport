@@ -1,13 +1,14 @@
 'use client'
-import { useState } from 'react'
-import clsx from 'clsx'
-import { Download, FileSpreadsheet, CheckCircle2, Settings2, Layers, Table2 } from 'lucide-react'
-import { mockTestItems, mockProjects, priorityLabels, automatableLabels } from '@/lib/mock-data'
+import { useState, useEffect } from 'react'
+import { Download, FileSpreadsheet, CheckCircle2, Settings2, Layers, Table2, Loader2 } from 'lucide-react'
+import { priorityLabels, automatableLabels } from '@/lib/mock-data'
+import type { TestItem } from '@/types'
+import { clsx } from 'clsx'
 
 export default function ExportPage({ params }: { params: { id: string } }) {
-  const project = mockProjects.find(p => p.id === params.id) || mockProjects[0]
-  const items = mockTestItems.filter(t => t.projectId === params.id && !t.isDeleted)
-
+  const [items, setItems] = useState<TestItem[]>([])
+  const [projectName, setProjectName] = useState('プロジェクト')
+  const [loading, setLoading] = useState(true)
   const [sheetMode, setSheetMode] = useState<'single' | 'split'>('single')
   const [includeColumns, setIncludeColumns] = useState({
     testId: true, categoryMajor: true, categoryMinor: true, testPerspective: true,
@@ -24,67 +25,74 @@ export default function ExportPage({ params }: { params: { id: string } }) {
     automatable: '自動化可否', result: '実施結果', notes: '備考',
   }
 
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/test-items?projectId=${params.id}`).then(r => r.json()),
+      fetch(`/api/projects?id=${params.id}`).then(r => r.json()).catch(() => null),
+    ]).then(([itemData, projectData]) => {
+      const list = Array.isArray(itemData) ? itemData.filter((t: TestItem) => !t.isDeleted) : []
+      setItems(list)
+      if (projectData?.name) setProjectName(projectData.name)
+    }).catch(console.error).finally(() => setLoading(false))
+  }, [params.id])
+
+  const buildRow = (item: TestItem): (string | number)[] => {
+    const row: (string | number)[] = []
+    if (includeColumns.testId) row.push(item.testId)
+    if (includeColumns.categoryMajor) row.push(item.categoryMajor)
+    if (includeColumns.categoryMinor) row.push(item.categoryMinor)
+    if (includeColumns.testPerspective) row.push(item.testPerspective)
+    if (includeColumns.testTitle) row.push(item.testTitle)
+    if (includeColumns.precondition) row.push(item.precondition)
+    if (includeColumns.steps) row.push(item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'))
+    if (includeColumns.expectedResult) row.push(item.expectedResult)
+    if (includeColumns.priority) row.push(priorityLabels[item.priority] ?? item.priority)
+    if (includeColumns.automatable) row.push(automatableLabels[item.automatable] ?? item.automatable)
+    if (includeColumns.result) row.push('')
+    if (includeColumns.notes) row.push('')
+    return row
+  }
+
   const handleDownload = async () => {
+    if (items.length === 0) {
+      alert('テスト項目が0件です。先にAI生成を実行してください。')
+      return
+    }
     setDownloading(true)
-    // Dynamic import to avoid SSR issues
     const XLSX = await import('xlsx')
-    
+
     const headers = Object.entries(colLabels)
       .filter(([k]) => includeColumns[k as keyof typeof includeColumns])
       .map(([, v]) => v)
 
-    const rows = items.map(item => {
-      const row: (string | number)[] = []
-      if (includeColumns.testId) row.push(item.testId)
-      if (includeColumns.categoryMajor) row.push(item.categoryMajor)
-      if (includeColumns.categoryMinor) row.push(item.categoryMinor)
-      if (includeColumns.testPerspective) row.push(item.testPerspective)
-      if (includeColumns.testTitle) row.push(item.testTitle)
-      if (includeColumns.precondition) row.push(item.precondition)
-      if (includeColumns.steps) row.push(item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'))
-      if (includeColumns.expectedResult) row.push(item.expectedResult)
-      if (includeColumns.priority) row.push(priorityLabels[item.priority])
-      if (includeColumns.automatable) row.push(automatableLabels[item.automatable])
-      if (includeColumns.result) row.push('')
-      if (includeColumns.notes) row.push('')
-      return row
-    })
+    const colWidths = [8, 16, 16, 14, 36, 20, 40, 30, 8, 10, 10, 12]
+
+    const applyHeaderStyle = (ws: ReturnType<typeof XLSX.utils.aoa_to_sheet>, headerCount: number) => {
+      ws['!cols'] = headers.map((_, i) => ({ wch: colWidths[i] || 12 }))
+      // ヘッダー行スタイル（行高・折返し）
+      if (!ws['!rows']) ws['!rows'] = []
+      ws['!rows'][0] = { hpx: 20 }
+    }
 
     const wb = XLSX.utils.book_new()
 
     if (sheetMode === 'single') {
+      const rows = items.map(buildRow)
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
-      // Column widths
-      ws['!cols'] = headers.map((_, i) => ({ wch: [8, 16, 16, 14, 36, 20, 40, 30, 8, 10, 10, 12][i] || 12 }))
+      applyHeaderStyle(ws, headers.length)
       XLSX.utils.book_append_sheet(wb, ws, 'テスト項目書')
     } else {
       const majors = [...new Set(items.map(t => t.categoryMajor))]
       majors.forEach(major => {
-        const majorItems = items.filter(t => t.categoryMajor === major)
-        const majorRows = majorItems.map(item => {
-          const row: (string | number)[] = []
-          if (includeColumns.testId) row.push(item.testId)
-          if (includeColumns.categoryMajor) row.push(item.categoryMajor)
-          if (includeColumns.categoryMinor) row.push(item.categoryMinor)
-          if (includeColumns.testPerspective) row.push(item.testPerspective)
-          if (includeColumns.testTitle) row.push(item.testTitle)
-          if (includeColumns.precondition) row.push(item.precondition)
-          if (includeColumns.steps) row.push(item.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'))
-          if (includeColumns.expectedResult) row.push(item.expectedResult)
-          if (includeColumns.priority) row.push(priorityLabels[item.priority])
-          if (includeColumns.automatable) row.push(automatableLabels[item.automatable])
-          if (includeColumns.result) row.push('')
-          if (includeColumns.notes) row.push('')
-          return row
-        })
-        const ws = XLSX.utils.aoa_to_sheet([headers, ...majorRows])
-        ws['!cols'] = headers.map((_, i) => ({ wch: [8, 16, 16, 14, 36, 20, 40, 30, 8, 10, 10, 12][i] || 12 }))
+        const rows = items.filter(t => t.categoryMajor === major).map(buildRow)
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+        applyHeaderStyle(ws, headers.length)
         XLSX.utils.book_append_sheet(wb, ws, major.slice(0, 30))
       })
     }
 
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    XLSX.writeFile(wb, `テスト項目書_${project.name}_${today}.xlsx`)
+    XLSX.writeFile(wb, `テスト項目書_${projectName}_${today}.xlsx`)
 
     await new Promise(r => setTimeout(r, 600))
     setDownloading(false)
@@ -105,12 +113,20 @@ export default function ExportPage({ params }: { params: { id: string } }) {
           <FileSpreadsheet className="w-6 h-6 text-green-600" />
           <div>
             <p className="font-semibold text-gray-900">出力対象</p>
-            <p className="text-xs text-gray-500">{items.length}件のテスト項目</p>
+            {loading
+              ? <p className="text-xs text-gray-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> 読み込み中...</p>
+              : <p className="text-xs text-gray-500">{items.length}件のテスト項目</p>
+            }
           </div>
         </div>
         <div className="bg-gray-50 rounded-xl p-3 text-xs font-mono text-gray-600">
-          テスト項目書_{project.name}_{new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx
+          テスト項目書_{projectName}_{new Date().toISOString().slice(0, 10).replace(/-/g, '')}.xlsx
         </div>
+        {!loading && items.length === 0 && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            ⚠️ テスト項目がありません。AI生成ページで先に生成してください。
+          </div>
+        )}
       </div>
 
       {/* Sheet mode */}
@@ -122,13 +138,10 @@ export default function ExportPage({ params }: { params: { id: string } }) {
         <div className="grid grid-cols-2 gap-3">
           {[
             { value: 'single', label: '1シートにまとめる', desc: '全テスト項目を1枚のシートに出力' },
-            { value: 'split', label: '大分類ごとに分割', desc: '機能別にシートを分けて出力' },
+            { value: 'split',  label: '大分類ごとに分割',  desc: '機能別にシートを分けて出力' },
           ].map(({ value, label, desc }) => (
-            <button
-              key={value}
-              onClick={() => setSheetMode(value as 'single' | 'split')}
-              className={`p-4 rounded-xl border-2 text-left transition-all ${sheetMode === value ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'}`}
-            >
+            <button key={value} onClick={() => setSheetMode(value as 'single' | 'split')}
+              className={`p-4 rounded-xl border-2 text-left transition-all ${sheetMode === value ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'}`}>
               <div className="flex items-center gap-2 mb-1">
                 <Table2 className={`w-4 h-4 ${sheetMode === value ? 'text-shift-700' : 'text-gray-400'}`} />
                 <p className={`text-sm font-semibold ${sheetMode === value ? 'text-shift-800' : 'text-gray-700'}`}>{label}</p>
@@ -148,12 +161,10 @@ export default function ExportPage({ params }: { params: { id: string } }) {
         <div className="grid grid-cols-3 gap-2">
           {Object.entries(colLabels).map(([key, label]) => (
             <label key={key} className="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
+              <input type="checkbox"
                 checked={includeColumns[key as keyof typeof includeColumns]}
                 onChange={e => setIncludeColumns(c => ({ ...c, [key]: e.target.checked }))}
-                className="w-4 h-4 rounded border-gray-300 text-shift-700 accent-shift-700"
-              />
+                className="w-4 h-4 rounded border-gray-300 text-shift-700 accent-shift-700" />
               <span className="text-sm text-gray-700 group-hover:text-gray-900">{label}</span>
             </label>
           ))}
@@ -161,28 +172,21 @@ export default function ExportPage({ params }: { params: { id: string } }) {
       </div>
 
       {/* Download button */}
-      <button
-        onClick={handleDownload}
-        disabled={downloading}
+      <button onClick={handleDownload} disabled={downloading || loading}
         className={clsx(
           'w-full py-4 rounded-xl font-semibold text-base flex items-center justify-center gap-3 transition-all duration-200',
-          downloaded
-            ? 'bg-green-600 text-white'
-            : 'bg-shift-800 hover:bg-shift-700 text-white shadow-sm hover:shadow-card-hover'
-        )}
-      >
+          downloading || loading
+            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            : downloaded
+              ? 'bg-green-600 text-white'
+              : 'bg-shift-800 hover:bg-shift-700 text-white shadow-sm hover:shadow-card-hover'
+        )}>
         {downloading ? (
-          <>
-            <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Excelファイルを生成中...
-          </>
+          <><Loader2 className="animate-spin h-5 w-5" />Excelファイルを生成中...</>
         ) : downloaded ? (
           <><CheckCircle2 className="w-5 h-5" /> ダウンロード完了！</>
         ) : (
-          <><Download className="w-5 h-5" /> Excelファイルをダウンロード</>
+          <><Download className="w-5 h-5" /> Excelファイルをダウンロード ({items.length}件)</>
         )}
       </button>
 

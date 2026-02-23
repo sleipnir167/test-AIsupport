@@ -41,11 +41,13 @@ export async function POST(req: Request) {
   const {
     jobId, projectId, batchNum, totalBatches, batchSize, alreadyCount,
     perspectives, perspectiveWeights, targetPages = null, modelOverride,
+    ragTopK = { doc: 100, site: 40, src: 100 },
   }: {
     jobId: string; projectId: string; batchNum: number; totalBatches: number
     batchSize: number; alreadyCount: number; perspectives?: string[]
     perspectiveWeights?: Array<{ value: string; count: number }>
     targetPages: PageInfo[] | null; modelOverride?: string
+    ragTopK?: { doc: number; site: number; src: number }
   } = body
 
   log(jobId, `batch ${batchNum}/${totalBatches} size=${batchSize} already=${alreadyCount}`)
@@ -66,11 +68,11 @@ export async function POST(req: Request) {
       : baseQuery
 
     const [docChunks, siteChunks, sourceChunks] = await Promise.all([
-      searchChunks(pageQuery, projectId, 100),
-      searchChunks(pageQuery, projectId, 40, 'site_analysis'),
-      searchChunks(pageQuery, projectId, 100, 'source_code'),
+      searchChunks(pageQuery, projectId, ragTopK.doc),
+      searchChunks(pageQuery, projectId, ragTopK.site, 'site_analysis'),
+      searchChunks(pageQuery, projectId, ragTopK.src, 'source_code'),
     ])
-    log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
+    log(jobId, `RAG topK=(doc:${ragTopK.doc},site:${ragTopK.site},src:${ragTopK.src}) results=(doc:${docChunks.length} site:${siteChunks.length} src:${sourceChunks.length})`)
 
     const seenIds = new Set<string>()
     const allChunks = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
