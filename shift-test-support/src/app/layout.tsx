@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AIテスト支援システム | Shift株式会社',
-  description: 'AI活用テスト項目書自動生成システム - Shift株式会社',
+  title: 'AIテスト支援システム | MSOK株式会社',
+  description: 'AI活用テスト項目書自動生成システム - MSOK株式会社',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -187,7 +187,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
       </button>
 
       <div className="text-xs text-gray-400 text-center">
-        ヘッダー行はShiftコーポレートカラー（濃紺）で出力されます。<br />
+        ヘッダー行はMSOKコーポレートカラー（濃紺）で出力されます。<br />
         実施結果・備考列は空欄で出力されます（テスト実施後に記入してください）。
       </div>
     </div>

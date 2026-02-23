@@ -27,7 +27,7 @@ function createAIClient(): { client: OpenAI; model: string } {
       baseURL: 'https://openrouter.ai/api/v1',
       defaultHeaders: {
         'HTTP-Referer': 'https://shift-test-support.vercel.app',
-        'X-Title': 'Shift AI Test Support',
+        'X-Title': 'MSOK AI Test Support',
       },
     }),
     model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
