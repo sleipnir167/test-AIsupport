@@ -28,7 +28,7 @@ export function buildPrompts(
   const perspectiveWeights = options.perspectiveWeights
   const targetPages = options.targetPages
 
-  const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'shift_knowledge')
+  const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
   const sourceChunks = chunks.filter(c => c.category === 'source_code')
 

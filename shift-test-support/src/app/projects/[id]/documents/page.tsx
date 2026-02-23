@@ -28,7 +28,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
 
   const subCategoryOptions: Record<DocumentCategory, DocumentSubCategory[]> = {
     customer_doc: ['要件定義書', '機能設計書', 'テスト計画書', 'その他'],
-    shift_knowledge: ['チェックリスト', 'テスト事例', 'ガイドライン'],
+    MSOK_knowledge: ['チェックリスト', 'テスト事例', 'ガイドライン'],
     source_code: ['フロントエンド', 'バックエンド', 'インフラ'],
   }
 
@@ -80,7 +80,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
 
   const grouped = {
     customer_doc: docs.filter(d => d.category === 'customer_doc'),
-    shift_knowledge: docs.filter(d => d.category === 'shift_knowledge'),
+    MSOK_knowledge: docs.filter(d => d.category === 'MSOK_knowledge'),
     source_code: docs.filter(d => d.category === 'source_code'),
   }
 
@@ -109,7 +109,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
                   setSelectedSubCategory(subCategoryOptions[cat][0])
                 }}>
                 <option value="customer_doc">顧客資料</option>
-                <option value="shift_knowledge">Shiftナレッジ</option>
+                <option value="MSOK_knowledge">Shiftナレッジ</option>
                 <option value="source_code">ソースコード</option>
               </select>
             </div>
@@ -154,7 +154,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           <Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">読み込み中...</span>
         </div>
       ) : (
-        (['customer_doc', 'shift_knowledge', 'source_code'] as DocumentCategory[]).map(cat => (
+        (['customer_doc', 'MSOK_knowledge', 'source_code'] as DocumentCategory[]).map(cat => (
           <div key={cat} className="card">
             <div className="p-4 border-b border-gray-100 flex items-center gap-2">
               <span className={clsx('badge', categoryColors[cat])}>{categoryLabels[cat]}</span>

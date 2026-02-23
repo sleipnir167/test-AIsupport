@@ -9,7 +9,7 @@ export interface VectorMetadata {
   projectId: string
   docId: string
   filename: string
-  category: string   // customer_doc / shift_knowledge / source_code / site_analysis
+  category: string   // customer_doc / MSOK_knowledge / source_code / site_analysis
   chunkIndex: number
   text: string
   pageUrl: string | null //  site_analysis 時のページURL

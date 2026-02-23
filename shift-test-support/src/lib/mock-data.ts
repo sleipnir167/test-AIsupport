@@ -95,7 +95,7 @@ export const mockDocuments: Document[] = [
     id: 'doc-003',
     projectId: 'proj-001',
     filename: 'QAチェックリスト_ECシステム版.xlsx',
-    category: 'shift_knowledge',
+    category: 'MSOK_knowledge',
     subCategory: 'チェックリスト',
     fileSize: 524288,
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -335,13 +335,13 @@ export const automatableColors = {
 
 export const categoryColors: Record<string, string> = {
   customer_doc: 'bg-blue-100 text-blue-700',
-  shift_knowledge: 'bg-purple-100 text-purple-700',
+  MSOK_knowledge: 'bg-purple-100 text-purple-700',
   source_code: 'bg-orange-100 text-orange-700',
 }
 
 export const categoryLabels: Record<string, string> = {
   customer_doc: '顧客資料',
-  shift_knowledge: 'MSOKナレッジ',
+  MSOK_knowledge: 'MSOKナレッジ',
   source_code: 'ソースコード',
 }
 

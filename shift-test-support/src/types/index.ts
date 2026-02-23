@@ -16,7 +16,7 @@ export interface Project {
 }
 
 // ドキュメント
-export type DocumentCategory = 'customer_doc' | 'shift_knowledge' | 'source_code'
+export type DocumentCategory = 'customer_doc' | 'MSOK_knowledge' | 'source_code'
 export type DocumentStatus = 'pending' | 'processing' | 'completed' | 'error'
 export type DocumentSubCategory =
   | '要件定義書' | '機能設計書' | 'テスト計画書' | 'その他'
