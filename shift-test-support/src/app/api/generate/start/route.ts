@@ -14,18 +14,19 @@ import type { PageInfo } from '@/types'
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
+const ABORT_AT_MS = 54_000
+
 function log(jobId: string, ...args: unknown[]) {
-  const ts = new Date().toISOString()
-  console.log(`[generate][${jobId}][${ts}]`, ...args)
+  console.log(`[generate][${jobId}][${new Date().toISOString()}]`, ...args)
 }
 
-function createAIClient(): { client: OpenAI; model: string } {
+// モデル名からAIクライアントを生成（フロントから指定可能）
+function createAIClient(modelOverride?: string): { client: OpenAI; model: string } {
   const provider = process.env.AI_PROVIDER || 'openrouter'
-  log('init', 'AI_PROVIDER:', provider)
   if (provider === 'openai') {
     return {
       client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY! }),
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
+      model: modelOverride || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     }
   }
   return {
@@ -37,14 +38,14 @@ function createAIClient(): { client: OpenAI; model: string } {
         'X-Title': 'Shift AI Test Support',
       },
     }),
-    model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
+    model: modelOverride || process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v3-0324',
   }
 }
 
 export async function POST(req: Request) {
   const body = await req.json()
-  const { projectId, maxItems = 100, perspectives, targetPages = null }:
-    { projectId: string; maxItems: number; perspectives?: string[]; targetPages: PageInfo[] | null } = body
+  const { projectId, maxItems = 100, perspectives, targetPages = null, modelOverride }:
+    { projectId: string; maxItems: number; perspectives?: string[]; targetPages: PageInfo[] | null; modelOverride?: string } = body
 
   if (!projectId) return NextResponse.json({ error: 'projectIdは必須です' }, { status: 400 })
 
@@ -52,7 +53,8 @@ export async function POST(req: Request) {
   if (!project) return NextResponse.json({ error: 'プロジェクトが見つかりません' }, { status: 404 })
 
   const jobId = uuidv4()
-  log(jobId, 'START projectId:', projectId, 'maxItems:', maxItems)
+  const startedAt = Date.now()
+  log(jobId, `START projectId=${projectId} maxItems=${maxItems} model=${modelOverride || 'env'}`)
 
   const now = new Date().toISOString()
   const job: GenerationJob = {
@@ -61,11 +63,9 @@ export async function POST(req: Request) {
     createdAt: now, updatedAt: now,
   }
   await saveJob(job)
-  log(jobId, 'Job saved to KV')
 
   try {
-    // ── Step 1: RAG検索 ─────────────────────────────────
-    log(jobId, 'Step1: RAG search start')
+    // Step 1: RAG検索
     await updateJob(jobId, { stage: 0, message: 'RAG検索中...' })
 
     const baseQuery = `${project.targetSystem} テスト項目 機能 要件 画面 操作 入力 エラー`
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
       searchChunks(pageQuery, projectId, 8, 'site_analysis'),
       searchChunks(pageQuery, projectId, 6, 'source_code'),
     ])
-    log(jobId, `Step1 done: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
+    log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
 
     const seenIds = new Set<string>()
     const allChunks = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
@@ -88,8 +88,7 @@ export async function POST(req: Request) {
       return true
     })
 
-    // ── Step 2: プロンプト構築 ───────────────────────────
-    log(jobId, 'Step2: build prompt')
+    // Step 2: プロンプト構築
     await updateJob(jobId, {
       stage: 1,
       message: `プロンプト構築中 (Doc:${docChunks.length} Site:${siteChunks.length} Code:${sourceChunks.length})`,
@@ -99,16 +98,14 @@ export async function POST(req: Request) {
       project.name, project.targetSystem, allChunks,
       { maxItems, perspectives, targetPages }
     )
-    log(jobId, `Step2 done: systemPrompt=${systemPrompt.length}chars userPrompt=${userPrompt.length}chars`)
-    // プロンプトの先頭300文字をログに出力
-    log(jobId, 'systemPrompt preview:', systemPrompt.slice(0, 300))
-    log(jobId, 'userPrompt preview:', userPrompt.slice(0, 500))
+    log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
+    log(jobId, '[SYSTEM PROMPT]\n' + systemPrompt)
+    log(jobId, '[USER PROMPT]\n' + userPrompt.slice(0, 1500))
 
-    // プロンプトをKVに保存（UIで確認できるように）
     await updateJob(jobId, {
-      stage: 1,
-      message: `プロンプト構築完了`,
-      // @ts-ignore 拡張フィールド
+      stage: 2,
+      message: `AI生成中...`,
+      // @ts-ignore
       debugPrompt: {
         system: systemPrompt.slice(0, 1000),
         user: userPrompt.slice(0, 2000),
@@ -116,10 +113,15 @@ export async function POST(req: Request) {
       },
     })
 
-    // ── Step 3: AI呼び出し ──────────────────────────────
-    const { client, model } = createAIClient()
-    log(jobId, `Step3: AI call model=${model} maxItems=${maxItems}`)
-    await updateJob(jobId, { stage: 2, message: `AI生成中... (model: ${model})` })
+    // Step 3: AI呼び出し
+    const { client, model } = createAIClient(modelOverride)
+    log(jobId, `AI call: model=${model}`)
+
+    const abortController = new AbortController()
+    const abortTimer = setTimeout(() => {
+      log(jobId, 'ABORT: 54s timeout protection triggered')
+      abortController.abort()
+    }, ABORT_AT_MS - (Date.now() - startedAt))
 
     const aiStream = await client.chat.completions.create({
       model,
@@ -130,32 +132,67 @@ export async function POST(req: Request) {
       temperature: 0.3,
       max_tokens: 16000,
       stream: true,
-    })
-    log(jobId, 'Step3: stream opened')
+    }, { signal: abortController.signal })
+
+    log(jobId, 'Stream opened')
 
     let fullContent = ''
     let charCount = 0
     let lastKvUpdate = 0
+    let aborted = false
 
-    for await (const chunk of aiStream) {
-      const delta = chunk.choices[0]?.delta?.content || ''
-      if (!delta) continue
-      fullContent += delta
-      charCount += delta.length
-      if (charCount - lastKvUpdate >= 3000) {
-        log(jobId, `streaming: ${charCount} chars`)
-        await updateJob(jobId, { stage: 2, message: `AI生成中... (${charCount}文字)` })
-        lastKvUpdate = charCount
+    try {
+      for await (const chunk of aiStream) {
+        const delta = chunk.choices[0]?.delta?.content || ''
+        if (!delta) continue
+        fullContent += delta
+        charCount += delta.length
+        if (charCount - lastKvUpdate >= 2000) {
+          const elapsed = Math.round((Date.now() - startedAt) / 1000)
+          log(jobId, `Streaming: ${charCount}chars elapsed=${elapsed}s`)
+          await updateJob(jobId, { stage: 2, message: `AI生成中... (${charCount}文字 / ${elapsed}秒経過)` })
+          lastKvUpdate = charCount
+        }
+      }
+    } catch (e: unknown) {
+      if ((e as Error)?.name === 'AbortError' || abortController.signal.aborted) {
+        aborted = true
+        log(jobId, `Stream aborted at ${charCount}chars`)
+      } else {
+        throw e
+      }
+    } finally {
+      clearTimeout(abortTimer)
+    }
+
+    log(jobId, `Stream done: total=${charCount}chars aborted=${aborted}`)
+
+    // Step 4: パース・保存
+    await updateJob(jobId, { stage: 3, message: aborted ? '途中結果を保存中...' : 'テスト項目を保存中...' })
+
+    let items = parseTestItems(fullContent, projectId)
+    log(jobId, `Parsed: ${items.length} items`)
+
+    // タイムアウトでJSONが不完全な場合、途中まで切り出して再パース
+    if (items.length === 0 && aborted && fullContent.includes('{')) {
+      const lastBrace = fullContent.lastIndexOf('},')
+      if (lastBrace > 0) {
+        try {
+          items = parseTestItems(fullContent.slice(0, lastBrace) + '}]', projectId)
+          log(jobId, `Partial parse: ${items.length} items`)
+        } catch {
+          log(jobId, 'Partial parse also failed')
+        }
       }
     }
-    log(jobId, `Step3 done: total=${charCount}chars`)
 
-    // ── Step 4: パース・保存 ────────────────────────────
-    log(jobId, 'Step4: parse and save')
-    await updateJob(jobId, { stage: 3, message: 'テスト項目を保存中...' })
-
-    const items = parseTestItems(fullContent, projectId)
-    log(jobId, `Step4: parsed ${items.length} items`)
+    if (items.length === 0) {
+      throw new Error(
+        aborted
+          ? `タイムアウトにより生成を中断しました（${charCount}文字生成済）。\n使用モデル: ${model}\n推奨: google/gemini-flash-1.5 または openai/gpt-4o-mini`
+          : 'AIの応答からテスト項目を取得できませんでした'
+      )
+    }
 
     if (targetPages && targetPages.length > 0) {
       await saveTestItems(items)
@@ -171,25 +208,32 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     })
 
+    const elapsed = Math.round((Date.now() - startedAt) / 1000)
+
     await updateJob(jobId, {
-      status: 'completed', stage: 4, message: '完了',
+      status: 'completed',
+      stage: 4,
+      message: aborted ? `途中保存で完了` : `完了`,
       count: items.length,
+      // @ts-ignore
+      isPartial: aborted,
       breakdown: { documents: docChunks.length, siteAnalysis: siteChunks.length, sourceCode: sourceChunks.length },
       model,
+      elapsed,
     })
-    log(jobId, `COMPLETED: ${items.length} items`)
+    log(jobId, `DONE: ${items.length} items in ${elapsed}s partial=${aborted}`)
 
-    return NextResponse.json({ jobId, status: 'completed', count: items.length })
+    return NextResponse.json({ jobId, status: 'completed', count: items.length, isPartial: aborted })
 
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    const stack = e instanceof Error ? e.stack : ''
-    log(jobId, 'ERROR:', message, stack)
+    const stack = e instanceof Error ? (e.stack || '') : ''
+    log(jobId, 'ERROR:', message)
     await updateJob(jobId, {
       status: 'error',
       error: message,
       // @ts-ignore
-      debugError: stack?.slice(0, 500),
+      debugError: stack.slice(0, 500),
     })
     return NextResponse.json({ jobId, status: 'error', error: message }, { status: 500 })
   }
