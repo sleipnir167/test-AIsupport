@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import {
   Sparkles, CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
-  LayoutGrid, List, Bug, Copy, CheckCheck
+  LayoutGrid, List, Bug, Copy, CheckCheck, AlertTriangle, Zap
 } from 'lucide-react'
 import type { SiteAnalysis, PageInfo } from '@/types'
 
@@ -27,6 +27,68 @@ const PERSPECTIVE_OPTIONS = [
   { label: '性能',         value: '性能' },
 ]
 
+interface ModelOption {
+  id: string
+  label: string
+  inputCost: string
+  outputCost: string
+  feature: string
+  speed: '爆速' | '高速' | '標準'
+  isDefault?: boolean
+  isFree?: boolean
+}
+
+const MODEL_OPTIONS: ModelOption[] = [
+  {
+    id: 'deepseek/deepseek-v3-0324',
+    label: 'DeepSeek V3.2',
+    inputCost: '$0.20',
+    outputCost: '$0.35',
+    feature: '最安クラス。出力量が多いならこれ一択',
+    speed: '高速',
+    isDefault: true,
+  },
+  {
+    id: 'google/gemini-flash-1.5',
+    label: 'Gemini 3 Flash',
+    inputCost: '$0.50',
+    outputCost: '$3.00',
+    feature: 'RAGに最適。長大な仕様書も安価に読み込める',
+    speed: '爆速',
+  },
+  {
+    id: 'openai/gpt-4o-mini',
+    label: 'GPT-5 Nano',
+    inputCost: '$0.05',
+    outputCost: '$0.20',
+    feature: '最も安価なGPT。簡単なテストケースなら十分',
+    speed: '爆速',
+  },
+  {
+    id: 'openai/gpt-4o',
+    label: 'GPT-5.2 (Pro)',
+    inputCost: '$1.75',
+    outputCost: '$14.00',
+    feature: '非常に高精度。複雑なロジックの網羅に強い',
+    speed: '標準',
+  },
+  {
+    id: 'stepfun/step-3-5-flash',
+    label: 'Step 3.5 Flash',
+    inputCost: '無料',
+    outputCost: '無料',
+    feature: 'OpenRouterで提供される無料枠。お試しに最適',
+    speed: '高速',
+    isFree: true,
+  },
+]
+
+const SPEED_COLOR: Record<string, string> = {
+  '爆速': 'text-green-600 bg-green-50',
+  '高速': 'text-blue-600 bg-blue-50',
+  '標準': 'text-gray-600 bg-gray-100',
+}
+
 interface JobDebug {
   status: string
   stage: number
@@ -36,7 +98,10 @@ interface JobDebug {
   debugPrompt?: { system: string; user: string; totalChunks: number }
   model?: string
   count?: number
+  isPartial?: boolean
+  elapsed?: number
   updatedAt?: string
+  breakdown?: { documents: number; siteAnalysis: number; sourceCode: number }
 }
 
 export default function GeneratePage({ params }: { params: { id: string } }) {
@@ -52,14 +117,19 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showDebug, setShowDebug] = useState(false)
 
+  // モデル選択
+  const [selectedModelId, setSelectedModelId] = useState(MODEL_OPTIONS.find(m => m.isDefault)!.id)
+  const [customModel, setCustomModel] = useState('')
+  const [useCustomModel, setUseCustomModel] = useState(false)
+
   const [generating, setGenerating] = useState(false)
   const [stageIdx, setStageIdx] = useState(0)
   const [stageMessage, setStageMessage] = useState('')
   const [progress, setProgress] = useState(0)
   const [done, setDone] = useState(false)
+  const [isPartial, setIsPartial] = useState(false)
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
-  const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
   const [jobDebug, setJobDebug] = useState<JobDebug | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -89,24 +159,26 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     }, 150)
   }
 
-  const finishSuccess = (count: number, breakdown: typeof ragBreakdown) => {
+  const finishSuccess = (job: JobDebug) => {
     if (pollingRef.current) clearInterval(pollingRef.current)
     if (progressTimer.current) clearInterval(progressTimer.current)
     progressRef.current = 100
     setProgress(100)
     setStageIdx(4)
-    setResultCount(count)
-    setRagBreakdown(breakdown)
+    setResultCount(job.count ?? 0)
+    setIsPartial(job.isPartial ?? false)
+    setJobDebug(job)
     setDone(true)
     setGenerating(false)
   }
 
-  const finishError = (msg: string) => {
+  const finishError = (msg: string, job?: JobDebug) => {
     if (pollingRef.current) clearInterval(pollingRef.current)
     if (progressTimer.current) clearInterval(progressTimer.current)
     setError(msg)
+    if (job) setJobDebug(job)
     setGenerating(false)
-    setShowDebug(true) // エラー時は自動でデバッグパネルを開く
+    setShowDebug(true)
   }
 
   const startPolling = (jobId: string) => {
@@ -115,9 +187,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       try {
         const res = await fetch(`/api/generate/status?jobId=${jobId}`)
         if (!res.ok) return
-        const job = await res.json()
-
-        // デバッグ情報を保存
+        const job: JobDebug = await res.json()
         setJobDebug(job)
 
         if (typeof job.stage === 'number') {
@@ -125,11 +195,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           setStageMessage(job.message || '')
           animateTo(STAGE_PROGRESS[Math.min(job.stage, STAGE_PROGRESS.length - 2)])
         }
-        if (job.status === 'completed') {
-          finishSuccess(job.count ?? 0, job.breakdown ?? null)
-        } else if (job.status === 'error') {
-          finishError(job.error || 'AI生成に失敗しました')
-        }
+        if (job.status === 'completed') finishSuccess(job)
+        else if (job.status === 'error') finishError(job.error || 'AI生成に失敗しました', job)
       } catch (e) {
         console.warn('Polling error:', e)
       }
@@ -140,6 +207,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     if (targetMode === 'all' || !siteAnalysis) return null
     return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
   }
+
+  const getModelId = () => useCustomModel ? (customModel.trim() || selectedModelId) : selectedModelId
 
   const generate = async () => {
     const targetPages = getTargetPages()
@@ -154,8 +223,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setStageIdx(0)
     setStageMessage('ジョブを登録中...')
     setDone(false)
+    setIsPartial(false)
     setError('')
-    setRagBreakdown(null)
     setJobDebug(null)
     jobIdRef.current = null
     animateTo(5)
@@ -169,48 +238,46 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           maxItems,
           perspectives: Array.from(selectedPerspectives),
           targetPages,
+          modelOverride: getModelId(),
         }),
       })
 
       const data = await startRes.json()
       console.log('[generate] /start response:', data)
 
-      if (!data.jobId) {
-        throw new Error(data.error || 'jobIdが返されませんでした')
-      }
-
+      if (!data.jobId) throw new Error(data.error || 'jobIdが返されませんでした')
       jobIdRef.current = data.jobId
 
-      // 既に完了 or エラー（60秒以内に処理終了）
       if (data.status === 'completed') {
-        finishSuccess(data.count ?? 0, null)
+        // 完了済みならstatusを取得して完了処理
+        const statusRes = await fetch(`/api/generate/status?jobId=${data.jobId}`)
+        const job: JobDebug = await statusRes.json()
+        finishSuccess(job)
         return
       }
       if (data.status === 'error') {
-        // jobId があるのでstatus APIで詳細を取得
         const statusRes = await fetch(`/api/generate/status?jobId=${data.jobId}`)
-        const job = await statusRes.json()
-        setJobDebug(job)
-        finishError(data.error || 'AI生成に失敗しました')
+        const job: JobDebug = await statusRes.json()
+        finishError(data.error || 'AI生成に失敗しました', job)
         return
       }
 
-      // pending/running → ポーリング開始
       animateTo(STAGE_PROGRESS[0])
       startPolling(data.jobId)
 
     } catch (e) {
-      console.error('[generate] fetch error:', e)
+      console.error('[generate] error:', e)
       finishError(e instanceof Error ? e.message : 'AI生成に失敗しました')
     }
   }
 
   const copyDebug = () => {
-    const text = JSON.stringify(jobDebug, null, 2)
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(JSON.stringify(jobDebug, null, 2))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
+
+  const selectedModel = MODEL_OPTIONS.find(m => m.id === selectedModelId)
 
   return (
     <div className="max-w-3xl animate-fade-in space-y-5">
@@ -235,6 +302,109 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* モデル選択 */}
+      <div className="card">
+        <div className="p-4 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-900">使用AIモデル</p>
+          <p className="text-xs text-gray-400 mt-0.5">OpenRouter経由で呼び出します。APIキー: OPENROUTER_API_KEY</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="w-8 px-3 py-2"></th>
+                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">モデル名</th>
+                <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">入力/1M</th>
+                <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">出力/1M</th>
+                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">特徴</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {MODEL_OPTIONS.map(m => (
+                <tr
+                  key={m.id}
+                  onClick={() => { setSelectedModelId(m.id); setUseCustomModel(false) }}
+                  className={`cursor-pointer transition-colors ${
+                    !useCustomModel && selectedModelId === m.id
+                      ? 'bg-shift-50 border-l-2 border-l-shift-700'
+                      : 'hover:bg-gray-50 border-l-2 border-l-transparent'
+                  }`}
+                >
+                  <td className="px-3 py-2.5 text-center">
+                    <input
+                      type="radio"
+                      name="model"
+                      checked={!useCustomModel && selectedModelId === m.id}
+                      onChange={() => { setSelectedModelId(m.id); setUseCustomModel(false) }}
+                      className="accent-shift-700"
+                    />
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="font-medium text-gray-900">{m.label}</div>
+                    <div className="text-xs text-gray-400 font-mono">{m.id}</div>
+                  </td>
+                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>
+                    {m.inputCost}
+                  </td>
+                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>
+                    {m.outputCost}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 max-w-xs">{m.feature}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SPEED_COLOR[m.speed]}`}>
+                      {m.speed === '爆速' && <span>⚡ </span>}{m.speed}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {/* カスタム入力行 */}
+              <tr
+                onClick={() => setUseCustomModel(true)}
+                className={`cursor-pointer transition-colors ${
+                  useCustomModel
+                    ? 'bg-shift-50 border-l-2 border-l-shift-700'
+                    : 'hover:bg-gray-50 border-l-2 border-l-transparent'
+                }`}
+              >
+                <td className="px-3 py-2.5 text-center">
+                  <input
+                    type="radio"
+                    name="model"
+                    checked={useCustomModel}
+                    onChange={() => setUseCustomModel(true)}
+                    className="accent-shift-700"
+                  />
+                </td>
+                <td className="px-3 py-2.5" colSpan={5}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-700 flex-shrink-0">任意のモデルを指定</span>
+                    <input
+                      type="text"
+                      placeholder="例: meta-llama/llama-3.1-70b-instruct"
+                      value={customModel}
+                      onChange={e => { setCustomModel(e.target.value); setUseCustomModel(true) }}
+                      onClick={e => e.stopPropagation()}
+                      className="input py-1 text-xs font-mono flex-1"
+                    />
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {!useCustomModel && selectedModel && (
+          <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
+            選択中: <span className="font-mono font-semibold">{selectedModel.id}</span>
+          </div>
+        )}
+        {useCustomModel && customModel && (
+          <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
+            選択中: <span className="font-mono font-semibold">{customModel}</span>
+          </div>
+        )}
       </div>
 
       {/* 画面単位選択 */}
@@ -314,9 +484,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   onChange={e => setMaxItems(Number(e.target.value))}
                   className="input py-1.5 w-28 text-sm" />
               </div>
-              <p className="text-xs text-gray-400 mt-1">
-                ⚠️ Vercel無料プランは60秒制限。DeepSeekは遅いため <strong>50〜100件推奨</strong>。
-              </p>
+              <p className="text-xs text-gray-400 mt-1">⚠️ Vercel無料プランは60秒制限。DeepSeekは <strong>50〜100件推奨</strong>。爆速モデルなら300件以上も可能。</p>
             </div>
             <div>
               <label className="label">テスト観点</label>
@@ -362,15 +530,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <div className="space-y-2">
             {STAGES.map((stage, i) => (
               <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${i === stageIdx ? 'text-shift-700 font-semibold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'}`}>
-                {i < stageIdx
-                  ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  : i === stageIdx
-                    ? <div className="w-3.5 h-3.5 rounded-full border-2 border-shift-600 border-t-transparent animate-spin flex-shrink-0" />
-                    : <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />}
+                {i < stageIdx ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                  : i === stageIdx ? <div className="w-3.5 h-3.5 rounded-full border-2 border-shift-600 border-t-transparent animate-spin flex-shrink-0" />
+                  : <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />}
                 <span>{stage}</span>
-                {i === stageIdx && stageMessage && (
-                  <span className="text-gray-400 truncate max-w-xs">— {stageMessage}</span>
-                )}
+                {i === stageIdx && stageMessage && <span className="text-gray-400 truncate max-w-xs">— {stageMessage}</span>}
               </div>
             ))}
           </div>
@@ -386,13 +550,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-sm font-semibold text-red-800">エラーが発生しました</p>
-            <p className="text-xs text-red-600 mt-0.5 break-all">{error}</p>
+            <p className="text-xs text-red-600 mt-0.5 break-all whitespace-pre-wrap">{error}</p>
             <div className="flex gap-2 mt-3">
               <button className="btn-secondary text-xs py-1.5" onClick={() => { setError(''); setShowDebug(false) }}>再試行</button>
               <button className="btn-secondary text-xs py-1.5"
-                onClick={() => router.push(`/projects/${params.id}/test-items`)}>
-                テスト項目書を確認
-              </button>
+                onClick={() => router.push(`/projects/${params.id}/test-items`)}>テスト項目書を確認</button>
             </div>
           </div>
         </div>
@@ -407,12 +569,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               <Bug className="w-4 h-4 text-amber-600" />
               <span className="text-sm font-semibold text-amber-800">デバッグ情報</span>
               {jobDebug && (
-                <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${
-                  jobDebug.status === 'completed' ? 'bg-green-100 text-green-700'
-                  : jobDebug.status === 'error' ? 'bg-red-100 text-red-700'
-                  : jobDebug.status === 'running' ? 'bg-blue-100 text-blue-700'
-                  : 'bg-gray-100 text-gray-600'
-                }`}>{jobDebug.status}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${jobDebug.status === 'completed' ? 'bg-green-100 text-green-700' : jobDebug.status === 'error' ? 'bg-red-100 text-red-700' : jobDebug.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                  {jobDebug.status}
+                </span>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -426,22 +585,21 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               {showDebug ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
             </div>
           </button>
-
           {showDebug && (
             <div className="border-t border-amber-200 p-4 space-y-4">
-              {/* ジョブ基本情報 */}
               {jobDebug && (
                 <div>
                   <p className="text-xs font-semibold text-gray-600 mb-2">ジョブ状態</p>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {[
-                      { label: 'Job ID', value: jobIdRef.current || '-' },
-                      { label: 'Status', value: jobDebug.status },
-                      { label: 'Stage', value: String(jobDebug.stage) },
-                      { label: 'Message', value: jobDebug.message },
-                      { label: 'Model', value: jobDebug.model || '-' },
-                      { label: 'Count', value: String(jobDebug.count ?? '-') },
-                      { label: 'Updated', value: jobDebug.updatedAt ? new Date(jobDebug.updatedAt).toLocaleTimeString('ja-JP') : '-' },
+                      { label: 'Job ID',   value: jobIdRef.current || '-' },
+                      { label: 'Status',   value: jobDebug.status },
+                      { label: 'Stage',    value: String(jobDebug.stage) },
+                      { label: 'Message',  value: jobDebug.message },
+                      { label: 'Model',    value: jobDebug.model || '-' },
+                      { label: 'Count',    value: String(jobDebug.count ?? '-') },
+                      { label: 'Elapsed',  value: jobDebug.elapsed ? `${jobDebug.elapsed}s` : '-' },
+                      { label: 'Updated',  value: jobDebug.updatedAt ? new Date(jobDebug.updatedAt).toLocaleTimeString('ja-JP') : '-' },
                     ].map(({ label, value }) => (
                       <div key={label} className="bg-gray-50 rounded p-2">
                         <p className="text-gray-400 text-xs">{label}</p>
@@ -451,43 +609,28 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   </div>
                 </div>
               )}
-
-              {/* エラー詳細 */}
               {jobDebug?.error && (
                 <div>
                   <p className="text-xs font-semibold text-red-600 mb-2">エラー詳細</p>
                   <pre className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 overflow-x-auto whitespace-pre-wrap break-all">
-                    {jobDebug.error}
-                    {jobDebug.debugError && `\n\nStack:\n${jobDebug.debugError}`}
+                    {jobDebug.error}{jobDebug.debugError && `\n\nStack:\n${jobDebug.debugError}`}
                   </pre>
                 </div>
               )}
-
-              {/* プロンプト */}
               {jobDebug?.debugPrompt && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-600 mb-2">
-                    使用プロンプト（RAGチャンク: {jobDebug.debugPrompt.totalChunks}件）
-                  </p>
+                  <p className="text-xs font-semibold text-gray-600 mb-2">使用プロンプト（RAGチャンク: {jobDebug.debugPrompt.totalChunks}件）</p>
                   <div className="space-y-2">
                     <div>
-                      <p className="text-xs text-gray-400 mb-1">System Prompt（先頭1000文字）</p>
-                      <pre className="bg-gray-900 text-green-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-40">
-                        {jobDebug.debugPrompt.system}
-                      </pre>
+                      <p className="text-xs text-gray-400 mb-1">System Prompt</p>
+                      <pre className="bg-gray-900 text-green-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-40">{jobDebug.debugPrompt.system}</pre>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-400 mb-1">User Prompt（先頭2000文字）</p>
-                      <pre className="bg-gray-900 text-blue-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-60">
-                        {jobDebug.debugPrompt.user}
-                      </pre>
+                      <p className="text-xs text-gray-400 mb-1">User Prompt</p>
+                      <pre className="bg-gray-900 text-blue-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-60">{jobDebug.debugPrompt.user}</pre>
                     </div>
                   </div>
                 </div>
-              )}
-
-              {!jobDebug && generating && (
-                <p className="text-xs text-gray-400">ジョブ情報を取得中... ポーリングを待っています</p>
               )}
             </div>
           )}
@@ -496,17 +639,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
       {/* 完了 */}
       {done && (
-        <div className="card p-6 text-center animate-slide-up">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 className="w-8 h-8 text-green-600" />
+        <div className={`card p-6 text-center animate-slide-up ${isPartial ? 'border border-amber-300' : ''}`}>
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isPartial ? 'bg-amber-100' : 'bg-green-100'}`}>
+            {isPartial
+              ? <AlertTriangle className="w-8 h-8 text-amber-600" />
+              : <CheckCircle2 className="w-8 h-8 text-green-600" />}
           </div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">生成完了！</h3>
-          <p className="text-sm text-gray-600 mb-3">{resultCount.toLocaleString()}件のテスト項目を生成しました</p>
-          {ragBreakdown && (
+          <h3 className="text-lg font-bold text-gray-900 mb-1">
+            {isPartial ? '途中保存で完了' : '生成完了！'}
+          </h3>
+          <p className="text-sm text-gray-600 mb-1">{resultCount.toLocaleString()}件のテスト項目を生成しました</p>
+          {isPartial && (
+            <div className="my-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 text-left">
+              <p className="font-semibold flex items-center gap-1 mb-1">
+                <AlertTriangle className="w-3.5 h-3.5" /> 60秒タイムアウトにより途中で打ち切りました
+              </p>
+              <p>生成できた分（{resultCount}件）は保存されています。</p>
+              <p className="mt-1">より多く生成したい場合は <span className="font-mono bg-amber-100 px-1 rounded">⚡ 爆速</span> モデルを選択してください。</p>
+            </div>
+          )}
+          {jobDebug?.breakdown && (
             <div className="flex justify-center gap-4 text-xs text-gray-500 mb-5">
-              <span>📄 Doc: {ragBreakdown.documents}</span>
-              <span>🌐 Site: {ragBreakdown.siteAnalysis}</span>
-              <span>💻 Src: {ragBreakdown.sourceCode}</span>
+              <span>📄 Doc: {jobDebug.breakdown.documents}</span>
+              <span>🌐 Site: {jobDebug.breakdown.siteAnalysis}</span>
+              <span>💻 Src: {jobDebug.breakdown.sourceCode}</span>
+              {jobDebug.elapsed && <span>⏱ {jobDebug.elapsed}s</span>}
             </div>
           )}
           <div className="flex gap-3 justify-center">
