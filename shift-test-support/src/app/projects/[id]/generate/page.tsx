@@ -40,7 +40,7 @@ interface ModelOption {
 
 const MODEL_OPTIONS: ModelOption[] = [
   {
-    id: 'deepseek/deepseek-v3-0324',
+    id: 'deepseek/deepseek-v3.2',
     label: 'DeepSeek V3.2',
     inputCost: '$0.20',
     outputCost: '$0.35',
@@ -49,35 +49,43 @@ const MODEL_OPTIONS: ModelOption[] = [
     isDefault: true,
   },
   {
-    id: 'google/gemini-2.0-flash-001',
-    label: 'Gemini 2.0 Flash',
-    inputCost: '$0.10',
-    outputCost: '$0.40',
-    feature: 'RAGに最適。爆速で大量生成可能',
-    speed: '爆速',
-  },
-  {
-    id: 'google/gemini-2.5-flash-preview',
+    id: 'google/gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
     inputCost: '$0.15',
     outputCost: '$0.60',
-    feature: '最新Gemini。高精度かつ高速',
+    feature: '最新Gemini。高精度かつ爆速',
     speed: '爆速',
   },
   {
-    id: 'openai/gpt-4o-mini',
-    label: 'GPT-4o mini',
-    inputCost: '$0.15',
-    outputCost: '$0.60',
-    feature: 'OpenAIの高速・軽量モデル',
-    speed: '高速',
+    id: 'google/gemini-3-flash-preview',
+    label: 'Gemini 3 Flash Preview',
+    inputCost: '$0.10',
+    outputCost: '$0.40',
+    feature: 'Gemini最新プレビュー。爆速で大量生成可能',
+    speed: '爆速',
   },
   {
-    id: 'openai/gpt-4o',
-    label: 'GPT-4o',
-    inputCost: '$2.50',
-    outputCost: '$10.00',
+    id: 'openai/gpt-5-nano',
+    label: 'GPT-5 Nano',
+    inputCost: '$0.05',
+    outputCost: '$0.20',
+    feature: '最も安価なGPT。軽量タスクに最適',
+    speed: '爆速',
+  },
+  {
+    id: 'openai/gpt-5.2',
+    label: 'GPT-5.2',
+    inputCost: '$1.75',
+    outputCost: '$14.00',
     feature: '非常に高精度。複雑なロジックの網羅に強い',
+    speed: '標準',
+  },
+  {
+    id: 'anthropic/claude-sonnet-4.6',
+    label: 'Claude Sonnet 4.6',
+    inputCost: '$3.00',
+    outputCost: '$15.00',
+    feature: 'Anthropic最新。論理的な分析に最強',
     speed: '標準',
   },
   {
@@ -87,6 +95,24 @@ const MODEL_OPTIONS: ModelOption[] = [
     outputCost: '$0.30',
     feature: 'Meta製OSS。コスパ良好',
     speed: '高速',
+  },
+  {
+    id: 'deepseek/deepseek-r1-0528:free',
+    label: 'DeepSeek R1 0528 (free)',
+    inputCost: '無料',
+    outputCost: '無料',
+    feature: 'OpenRouterの無料枠。お試しに最適',
+    speed: '高速',
+    isFree: true,
+  },
+  {
+    id: 'arcee-ai/trinity-large-preview:free',
+    label: 'Arcee Trinity Large (free)',
+    inputCost: '無料',
+    outputCost: '無料',
+    feature: 'Arcee AI製の無料プレビューモデル',
+    speed: '高速',
+    isFree: true,
   },
 ]
 
@@ -121,6 +147,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
   )
+  // テスト観点ごとの件数配分（スライダー）
+  const [perspectiveMode, setPerspectiveMode] = useState<'equal' | 'weighted'>('equal')
+  const [perspectiveWeights, setPerspectiveWeights] = useState<Record<string, number>>({
+    '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10
+  })
   const [targetMode, setTargetMode] = useState<'all' | 'pages'>('all')
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -268,6 +299,13 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       const { jobId, totalBatches, batchSize, perspectives: persp, modelOverride } = startData
       jobIdRef.current = jobId
 
+      // 観点の重み付けを計算
+      const weightedPersp = perspectiveMode === 'weighted'
+        ? Array.from(selectedPerspectives)
+            .filter(p => (perspectiveWeights[p] ?? 0) > 0)
+            .map(p => ({ value: p, count: Math.round((perspectiveWeights[p] ?? 0) / 100 * batchSize) }))
+        : undefined
+
       // Step2: バッチを順番に実行
       let totalGenerated = 0
       let isTimeout = false
@@ -296,6 +334,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             batchSize: currentBatch,
             alreadyCount: totalGenerated,
             perspectives: persp,
+            perspectiveWeights: weightedPersp,
             targetPages,
             modelOverride,
           }),
@@ -575,16 +614,74 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             </div>
             <div>
               <label className="label">テスト観点</label>
-              <div className="flex flex-wrap gap-2">
-                {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
-                  <button key={value} onClick={() => setSelectedPerspectives(prev => {
-                    const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                  })}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${selectedPerspectives.has(value) ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>
-                    {label}
-                  </button>
+              {/* モード切替 */}
+              <div className="flex gap-2 mb-3">
+                {[
+                  { mode: 'equal' as const,    label: '均等配分' },
+                  { mode: 'weighted' as const, label: '件数指定' },
+                ].map(({ mode, label }) => (
+                  <button key={mode} onClick={() => setPerspectiveMode(mode)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
+                      perspectiveMode === mode
+                        ? 'bg-shift-800 text-white border-shift-800'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                    }`}>{label}</button>
                 ))}
               </div>
+
+              {perspectiveMode === 'equal' ? (
+                /* 均等配分：従来のトグルボタン */
+                <div className="flex flex-wrap gap-2">
+                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
+                    <button key={value} onClick={() => setSelectedPerspectives(prev => {
+                      const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                    })}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
+                        selectedPerspectives.has(value)
+                          ? 'bg-shift-100 text-shift-800 border-shift-400'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                      }`}>{label}</button>
+                  ))}
+                </div>
+              ) : (
+                /* 件数指定：スライダー */
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-400">
+                    合計: <span className="font-semibold text-shift-700">
+                      {PERSPECTIVE_OPTIONS
+                        .filter(p => selectedPerspectives.has(p.value))
+                        .reduce((s, p) => s + (perspectiveWeights[p.value] ?? 0), 0)}件
+                    </span>
+                    （合計が最大生成件数の目安になります）
+                  </p>
+                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
+                    const enabled = selectedPerspectives.has(value)
+                    const count = perspectiveWeights[value] ?? 0
+                    return (
+                      <div key={value} className="flex items-center gap-3">
+                        <button
+                          onClick={() => setSelectedPerspectives(prev => {
+                            const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
+                          })}
+                          className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium transition-all ${
+                            enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'
+                          }`}
+                        >{label}</button>
+                        <input
+                          type="range" min={0} max={200} step={5}
+                          value={count}
+                          disabled={!enabled}
+                          onChange={e => setPerspectiveWeights(prev => ({ ...prev, [value]: Number(e.target.value) }))}
+                          className="flex-1 accent-shift-700 disabled:opacity-30"
+                        />
+                        <span className={`w-12 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>
+                          {enabled ? `${count}件` : 'OFF'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}

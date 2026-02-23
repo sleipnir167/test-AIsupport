@@ -40,10 +40,11 @@ export async function POST(req: Request) {
   const body = await req.json()
   const {
     jobId, projectId, batchNum, totalBatches, batchSize, alreadyCount,
-    perspectives, targetPages = null, modelOverride,
+    perspectives, perspectiveWeights, targetPages = null, modelOverride,
   }: {
     jobId: string; projectId: string; batchNum: number; totalBatches: number
     batchSize: number; alreadyCount: number; perspectives?: string[]
+    perspectiveWeights?: Array<{ value: string; count: number }>
     targetPages: PageInfo[] | null; modelOverride?: string
   } = body
 
@@ -65,9 +66,9 @@ export async function POST(req: Request) {
       : baseQuery
 
     const [docChunks, siteChunks, sourceChunks] = await Promise.all([
-      searchChunks(pageQuery, projectId, 20),
-      searchChunks(pageQuery, projectId, 10, 'site_analysis'),
-      searchChunks(pageQuery, projectId, 20, 'source_code'),
+      searchChunks(pageQuery, projectId, 30),
+      searchChunks(pageQuery, projectId, 15, 'site_analysis'),
+      searchChunks(pageQuery, projectId, 30, 'source_code'),
     ])
     log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
 
@@ -81,7 +82,7 @@ export async function POST(req: Request) {
 
     const { systemPrompt, userPrompt } = buildPrompts(
       project.name, project.targetSystem, allChunks,
-      { maxItems: batchSize, perspectives, targetPages }
+      { maxItems: batchSize, perspectives, perspectiveWeights, targetPages }
     )
     log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
     log(jobId, '[SYSTEM PROMPT]\n' + systemPrompt)
