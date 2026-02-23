@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import {
   Sparkles, CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
-  LayoutGrid, List
+  LayoutGrid, List, Bug, Copy, CheckCheck
 } from 'lucide-react'
 import type { SiteAnalysis, PageInfo } from '@/types'
 
@@ -27,6 +27,18 @@ const PERSPECTIVE_OPTIONS = [
   { label: '性能',         value: '性能' },
 ]
 
+interface JobDebug {
+  status: string
+  stage: number
+  message: string
+  error?: string
+  debugError?: string
+  debugPrompt?: { system: string; user: string; totalChunks: number }
+  model?: string
+  count?: number
+  updatedAt?: string
+}
+
 export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
@@ -38,6 +50,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [targetMode, setTargetMode] = useState<'all' | 'pages'>('all')
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showDebug, setShowDebug] = useState(false)
 
   const [generating, setGenerating] = useState(false)
   const [stageIdx, setStageIdx] = useState(0)
@@ -46,9 +59,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
-  const [ragBreakdown, setRagBreakdown] = useState<{
-    documents: number; siteAnalysis: number; sourceCode: number
-  } | null>(null)
+  const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
+  const [jobDebug, setJobDebug] = useState<JobDebug | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef = useRef(0)
@@ -70,9 +83,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const animateTo = (target: number) => {
     if (progressTimer.current) clearInterval(progressTimer.current)
     progressTimer.current = setInterval(() => {
-      progressRef.current = Math.min(
-        progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target
-      )
+      progressRef.current = Math.min(progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target)
       setProgress(Math.round(progressRef.current * 10) / 10)
       if (progressRef.current >= target - 0.1) clearInterval(progressTimer.current!)
     }, 150)
@@ -95,9 +106,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     if (progressTimer.current) clearInterval(progressTimer.current)
     setError(msg)
     setGenerating(false)
+    setShowDebug(true) // エラー時は自動でデバッグパネルを開く
   }
 
-  // ポーリング開始 ─ jobIdを受け取ったらすぐ呼ぶ
   const startPolling = (jobId: string) => {
     if (pollingRef.current) clearInterval(pollingRef.current)
     pollingRef.current = setInterval(async () => {
@@ -105,6 +116,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         const res = await fetch(`/api/generate/status?jobId=${jobId}`)
         if (!res.ok) return
         const job = await res.json()
+
+        // デバッグ情報を保存
+        setJobDebug(job)
 
         if (typeof job.stage === 'number') {
           setStageIdx(job.stage)
@@ -116,8 +130,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         } else if (job.status === 'error') {
           finishError(job.error || 'AI生成に失敗しました')
         }
-      } catch {
-        // 一時的なネットワークエラーは無視して継続
+      } catch (e) {
+        console.warn('Polling error:', e)
       }
     }, 3000)
   }
@@ -134,7 +148,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       return
     }
 
-    // UI初期化
     setGenerating(true)
     progressRef.current = 0
     setProgress(0)
@@ -143,11 +156,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setDone(false)
     setError('')
     setRagBreakdown(null)
+    setJobDebug(null)
     jobIdRef.current = null
     animateTo(5)
 
     try {
-      // Step1: jobIdを取得（この fetch は数秒で返る）
       const startRes = await fetch('/api/generate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -160,40 +173,50 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       })
 
       const data = await startRes.json()
-
-      // /start がエラーを返した場合（環境変数未設定など）
-      if (!startRes.ok && !data.jobId) {
-        throw new Error(data.error || 'ジョブの開始に失敗しました')
-      }
+      console.log('[generate] /start response:', data)
 
       if (!data.jobId) {
-        throw new Error('jobIdが返されませんでした。サーバーログを確認してください。')
+        throw new Error(data.error || 'jobIdが返されませんでした')
       }
 
       jobIdRef.current = data.jobId
 
-      // 既に完了している場合（超高速で終わった場合）
+      // 既に完了 or エラー（60秒以内に処理終了）
       if (data.status === 'completed') {
         finishSuccess(data.count ?? 0, null)
         return
       }
+      if (data.status === 'error') {
+        // jobId があるのでstatus APIで詳細を取得
+        const statusRes = await fetch(`/api/generate/status?jobId=${data.jobId}`)
+        const job = await statusRes.json()
+        setJobDebug(job)
+        finishError(data.error || 'AI生成に失敗しました')
+        return
+      }
 
-      // ポーリング開始（/startのレスポンスを待たずに進捗を表示）
+      // pending/running → ポーリング開始
       animateTo(STAGE_PROGRESS[0])
       startPolling(data.jobId)
 
     } catch (e) {
+      console.error('[generate] fetch error:', e)
       finishError(e instanceof Error ? e.message : 'AI生成に失敗しました')
     }
+  }
+
+  const copyDebug = () => {
+    const text = JSON.stringify(jobDebug, null, 2)
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   return (
     <div className="max-w-3xl animate-fade-in space-y-5">
       <div>
         <h1 className="text-xl font-bold text-gray-900">AIテスト項目生成</h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          ドキュメント・URL分析・ソースコードをRAGで活用してテスト項目を生成します
-        </p>
+        <p className="text-sm text-gray-500 mt-0.5">ドキュメント・URL分析・ソースコードをRAGで活用してテスト項目を生成します</p>
       </div>
 
       {/* RAGデータ状況 */}
@@ -208,9 +231,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
               <span className="text-sm text-gray-700 flex-1">{label}</span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                available ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-              }`}>{note}</span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${available ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{note}</span>
             </div>
           ))}
         </div>
@@ -222,13 +243,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <p className="text-sm font-semibold text-gray-900 mb-3">生成対象</p>
           <div className="grid grid-cols-2 gap-3 mb-4">
             {[
-              { mode: 'all'   as const, icon: List,       label: '全体を対象',     desc: 'すべての資料・画面を対象に生成' },
+              { mode: 'all' as const,   icon: List,       label: '全体を対象',     desc: 'すべての資料・画面を対象に生成' },
               { mode: 'pages' as const, icon: LayoutGrid, label: '画面単位で指定', desc: '特定の画面に絞って生成・追記' },
             ].map(({ mode, icon: Icon, label, desc }) => (
               <button key={mode} onClick={() => setTargetMode(mode)}
-                className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left transition-all ${
-                  targetMode === mode ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'
-                }`}>
+                className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left transition-all ${targetMode === mode ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'}`}>
                 <Icon className={`w-4 h-4 ${targetMode === mode ? 'text-shift-700' : 'text-gray-400'}`} />
                 <div>
                   <p className={`text-sm font-semibold ${targetMode === mode ? 'text-shift-800' : 'text-gray-700'}`}>{label}</p>
@@ -254,9 +273,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                     <label key={page.url} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer">
                       <input type="checkbox" className="w-4 h-4 accent-shift-700 flex-shrink-0"
                         checked={selectedPages.has(page.url)}
-                        onChange={() => setSelectedPages(prev => {
-                          const next = new Set(prev); next.has(page.url) ? next.delete(page.url) : next.add(page.url); return next
-                        })} />
+                        onChange={() => setSelectedPages(prev => { const next = new Set(prev); next.has(page.url) ? next.delete(page.url) : next.add(page.url); return next })} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{page.title}</p>
                         <p className="text-xs text-gray-400 font-mono truncate">{page.url}</p>
@@ -289,9 +306,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               <div className="flex gap-2 flex-wrap">
                 {[50, 100, 200, 300, 500].map(v => (
                   <button key={v} onClick={() => setMaxItems(v)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
-                    }`}>{v}件</button>
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
+                    {v}件
+                  </button>
                 ))}
                 <input type="number" min={10} max={5000} value={maxItems}
                   onChange={e => setMaxItems(Number(e.target.value))}
@@ -299,7 +316,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </div>
               <p className="text-xs text-gray-400 mt-1">
                 ⚠️ Vercel無料プランは60秒制限。DeepSeekは遅いため <strong>50〜100件推奨</strong>。
-                大量生成はOpenAI GPT-4o-miniまたはProプランを使用してください。
               </p>
             </div>
             <div>
@@ -309,11 +325,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                   <button key={value} onClick={() => setSelectedPerspectives(prev => {
                     const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
                   })}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      selectedPerspectives.has(value)
-                        ? 'bg-shift-100 text-shift-800 border-shift-400'
-                        : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                    }`}>{label}</button>
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${selectedPerspectives.has(value) ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>
+                    {label}
+                  </button>
                 ))}
               </div>
             </div>
@@ -347,9 +361,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           </div>
           <div className="space-y-2">
             {STAGES.map((stage, i) => (
-              <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${
-                i === stageIdx ? 'text-shift-700 font-semibold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'
-              }`}>
+              <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${i === stageIdx ? 'text-shift-700 font-semibold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'}`}>
                 {i < stageIdx
                   ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
                   : i === stageIdx
@@ -376,13 +388,109 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <p className="text-sm font-semibold text-red-800">エラーが発生しました</p>
             <p className="text-xs text-red-600 mt-0.5 break-all">{error}</p>
             <div className="flex gap-2 mt-3">
-              <button className="btn-secondary text-xs py-1.5" onClick={() => setError('')}>再試行</button>
+              <button className="btn-secondary text-xs py-1.5" onClick={() => { setError(''); setShowDebug(false) }}>再試行</button>
               <button className="btn-secondary text-xs py-1.5"
                 onClick={() => router.push(`/projects/${params.id}/test-items`)}>
                 テスト項目書を確認
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* デバッグパネル */}
+      {(jobDebug || generating || error) && (
+        <div className="card border border-amber-200">
+          <button className="w-full flex items-center justify-between p-3 hover:bg-amber-50 transition-colors"
+            onClick={() => setShowDebug(!showDebug)}>
+            <div className="flex items-center gap-2">
+              <Bug className="w-4 h-4 text-amber-600" />
+              <span className="text-sm font-semibold text-amber-800">デバッグ情報</span>
+              {jobDebug && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${
+                  jobDebug.status === 'completed' ? 'bg-green-100 text-green-700'
+                  : jobDebug.status === 'error' ? 'bg-red-100 text-red-700'
+                  : jobDebug.status === 'running' ? 'bg-blue-100 text-blue-700'
+                  : 'bg-gray-100 text-gray-600'
+                }`}>{jobDebug.status}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {jobDebug && (
+                <button onClick={e => { e.stopPropagation(); copyDebug() }}
+                  className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1">
+                  {copied ? <CheckCheck className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied ? 'コピー済' : 'コピー'}
+                </button>
+              )}
+              {showDebug ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
+            </div>
+          </button>
+
+          {showDebug && (
+            <div className="border-t border-amber-200 p-4 space-y-4">
+              {/* ジョブ基本情報 */}
+              {jobDebug && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 mb-2">ジョブ状態</p>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {[
+                      { label: 'Job ID', value: jobIdRef.current || '-' },
+                      { label: 'Status', value: jobDebug.status },
+                      { label: 'Stage', value: String(jobDebug.stage) },
+                      { label: 'Message', value: jobDebug.message },
+                      { label: 'Model', value: jobDebug.model || '-' },
+                      { label: 'Count', value: String(jobDebug.count ?? '-') },
+                      { label: 'Updated', value: jobDebug.updatedAt ? new Date(jobDebug.updatedAt).toLocaleTimeString('ja-JP') : '-' },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="bg-gray-50 rounded p-2">
+                        <p className="text-gray-400 text-xs">{label}</p>
+                        <p className="text-gray-800 font-mono break-all">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* エラー詳細 */}
+              {jobDebug?.error && (
+                <div>
+                  <p className="text-xs font-semibold text-red-600 mb-2">エラー詳細</p>
+                  <pre className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 overflow-x-auto whitespace-pre-wrap break-all">
+                    {jobDebug.error}
+                    {jobDebug.debugError && `\n\nStack:\n${jobDebug.debugError}`}
+                  </pre>
+                </div>
+              )}
+
+              {/* プロンプト */}
+              {jobDebug?.debugPrompt && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 mb-2">
+                    使用プロンプト（RAGチャンク: {jobDebug.debugPrompt.totalChunks}件）
+                  </p>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">System Prompt（先頭1000文字）</p>
+                      <pre className="bg-gray-900 text-green-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-40">
+                        {jobDebug.debugPrompt.system}
+                      </pre>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">User Prompt（先頭2000文字）</p>
+                      <pre className="bg-gray-900 text-blue-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-60">
+                        {jobDebug.debugPrompt.user}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!jobDebug && generating && (
+                <p className="text-xs text-gray-400">ジョブ情報を取得中... ポーリングを待っています</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -402,9 +510,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             </div>
           )}
           <div className="flex gap-3 justify-center">
-            <button className="btn-secondary" onClick={() => {
-              setDone(false); setProgress(0); progressRef.current = 0
-            }}>再生成する</button>
+            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0); progressRef.current = 0 }}>
+              再生成する
+            </button>
             <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
               テスト項目書を確認
             </button>
