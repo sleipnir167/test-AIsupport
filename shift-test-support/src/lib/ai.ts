@@ -75,13 +75,62 @@ ${pagesFocus}
 }
 
 /**
+ * JSON文字列内の不正な制御文字・改行をエスケープして修復する
+ */
+function sanitizeJson(raw: string): string {
+  // 文字列値の中にある生の制御文字（タブ・改行など）をエスケープ
+  // JSON仕様では文字列内の \n \t \r は \\n \\t \\r でなければならない
+  return raw.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
+    return match
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t')
+      // U+0000–U+001F の制御文字（\n\r\t 以外）を除去
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+  })
+}
+
+/**
+ * 不完全なJSON配列を末尾から切り詰めて修復する
+ */
+function repairJsonArray(raw: string): string {
+  // コードブロックを除去
+  let s = raw.replace(/```(?:json)?/gi, '').trim()
+
+  // 先頭の [ を探す
+  const start = s.indexOf('[')
+  if (start === -1) throw new Error('JSON配列の開始が見つかりません')
+  s = s.slice(start)
+
+  // まず制御文字をサニタイズ
+  s = sanitizeJson(s)
+
+  // そのままパースできれば返す
+  try { JSON.parse(s); return s } catch {}
+
+  // 末尾から } を探して切り詰め、配列として閉じる
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === '}') {
+      const candidate = s.slice(0, i + 1) + ']'
+      try { JSON.parse(candidate); return candidate } catch {}
+    }
+  }
+
+  throw new Error('JSONの修復に失敗しました')
+}
+
+/**
  * AIのテキスト応答をパースしてTestItem配列に変換する
  */
 export function parseTestItems(content: string, projectId: string): TestItem[] {
-  const jsonMatch = content.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) throw new Error(`AIの応答からJSONを抽出できませんでした。応答先頭: ${content.slice(0, 200)}`)
+  let jsonStr: string
+  try {
+    jsonStr = repairJsonArray(content)
+  } catch (e) {
+    throw new Error(`AIの応答からJSONを抽出できませんでした: ${(e as Error).message}\n応答先頭: ${content.slice(0, 300)}`)
+  }
 
-  const rawItems = JSON.parse(jsonMatch[0]) as Array<{
+  const rawItems = JSON.parse(jsonStr) as Array<{
     categoryMajor: string
     categoryMinor: string
     testPerspective: string
