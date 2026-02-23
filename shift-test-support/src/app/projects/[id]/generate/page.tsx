@@ -108,6 +108,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
+  const [sourceCodeCount, setSourceCodeCount] = useState(0)   // 取込済みソースコード件数
+  const [sourceCodeChunks, setSourceCodeChunks] = useState(0) // 取込済みチャンク数
   const [maxItems, setMaxItems] = useState(100)
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
@@ -142,6 +144,16 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     fetch(`/api/site-analysis?projectId=${params.id}`)
       .then(r => r.json())
       .then(data => { if (data?.id) setSiteAnalysis(data) })
+      .catch(() => {})
+    // ソースコード取込状況を取得
+    fetch(`/api/documents?projectId=${params.id}`)
+      .then(r => r.json())
+      .then((docs: Array<{ category: string; chunkCount?: number }>) => {
+        if (!Array.isArray(docs)) return
+        const srcDocs = docs.filter(d => d.category === 'source_code')
+        setSourceCodeCount(srcDocs.length)
+        setSourceCodeChunks(srcDocs.reduce((s, d) => s + (d.chunkCount ?? 0), 0))
+      })
       .catch(() => {})
   }, [params.id])
 
@@ -291,9 +303,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">RAGデータ利用状況</p>
         <div className="space-y-2">
           {[
-            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,         note: 'ドキュメント管理で確認' },
-            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,        note: siteAnalysis ? `${siteAnalysis.pageCount}ページ取込済` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: false,                 note: 'ソースコード取込で確認' },
+            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,              note: 'ドキュメント管理で確認' },
+            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,             note: siteAnalysis ? `${siteAnalysis.pageCount}ページ / チャンク: ${siteAnalysis.chunkCount ?? 0}` : '未実施（任意）' },
+            { icon: Code2,    label: 'ソースコード',  available: sourceCodeCount > 0,        note: sourceCodeCount > 0 ? `${sourceCodeCount}件取込済 / チャンク: ${sourceCodeChunks}` : '未取込（任意）' },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
