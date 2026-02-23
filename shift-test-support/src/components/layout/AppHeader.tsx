@@ -16,7 +16,7 @@ export default function AppHeader() {
           <Shield className="w-4 h-4 text-white" />
         </div>
         <div className="leading-none">
-          <span className="font-bold text-sm tracking-wide">Shift</span>
+          <span className="font-bold text-sm tracking-wide">MSOK</span>
           <span className="text-shift-300 text-xs ml-2">AIテスト支援</span>
         </div>
       </Link>
