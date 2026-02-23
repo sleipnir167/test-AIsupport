@@ -49,37 +49,44 @@ const MODEL_OPTIONS: ModelOption[] = [
     isDefault: true,
   },
   {
-    id: 'google/gemini-flash-1.5',
-    label: 'Gemini 3 Flash',
-    inputCost: '$0.50',
-    outputCost: '$3.00',
-    feature: 'RAGに最適。長大な仕様書も安価に読み込める',
+    id: 'google/gemini-2.0-flash-001',
+    label: 'Gemini 2.0 Flash',
+    inputCost: '$0.10',
+    outputCost: '$0.40',
+    feature: 'RAGに最適。爆速で大量生成可能',
+    speed: '爆速',
+  },
+  {
+    id: 'google/gemini-2.5-flash-preview',
+    label: 'Gemini 2.5 Flash',
+    inputCost: '$0.15',
+    outputCost: '$0.60',
+    feature: '最新Gemini。高精度かつ高速',
     speed: '爆速',
   },
   {
     id: 'openai/gpt-4o-mini',
-    label: 'GPT-5 Nano',
-    inputCost: '$0.05',
-    outputCost: '$0.20',
-    feature: '最も安価なGPT。簡単なテストケースなら十分',
-    speed: '爆速',
+    label: 'GPT-4o mini',
+    inputCost: '$0.15',
+    outputCost: '$0.60',
+    feature: 'OpenAIの高速・軽量モデル',
+    speed: '高速',
   },
   {
     id: 'openai/gpt-4o',
-    label: 'GPT-5.2 (Pro)',
-    inputCost: '$1.75',
-    outputCost: '$14.00',
+    label: 'GPT-4o',
+    inputCost: '$2.50',
+    outputCost: '$10.00',
     feature: '非常に高精度。複雑なロジックの網羅に強い',
     speed: '標準',
   },
   {
-    id: 'stepfun/step-3-5-flash',
-    label: 'Step 3.5 Flash',
-    inputCost: '無料',
-    outputCost: '無料',
-    feature: 'OpenRouterで提供される無料枠。お試しに最適',
+    id: 'meta-llama/llama-3.3-70b-instruct',
+    label: 'Llama 3.3 70B',
+    inputCost: '$0.12',
+    outputCost: '$0.30',
+    feature: 'Meta製OSS。コスパ良好',
     speed: '高速',
-    isFree: true,
   },
 ]
 
@@ -264,6 +271,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       // Step2: バッチを順番に実行
       let totalGenerated = 0
       let isTimeout = false
+      let usedModel = modelOverride || getModelId()
+      let ragBreakdown = { doc: 0, site: 0, src: 0 }
 
       for (let batch = 1; batch <= totalBatches; batch++) {
         const remaining = maxItems - totalGenerated
@@ -300,6 +309,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         }
 
         totalGenerated += batchData.count ?? 0
+        if (batchData.model) usedModel = batchData.model
+        if (batchData.ragBreakdown) ragBreakdown = batchData.ragBreakdown
 
         if (batchData.aborted) {
           isTimeout = true
@@ -332,6 +343,12 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         message: isTimeout ? `タイムアウトのため途中保存（${totalGenerated}件）` : `完了（${totalGenerated}件）`,
         count: totalGenerated,
         isPartial: isTimeout,
+        model: usedModel,
+        breakdown: {
+          documents: ragBreakdown.doc,
+          siteAnalysis: ragBreakdown.site,
+          sourceCode: ragBreakdown.src,
+        },
       }
       finishSuccess(finalJob)
 
