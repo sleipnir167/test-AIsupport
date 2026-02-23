@@ -9,7 +9,8 @@ export async function GET(req: Request) {
   if (!jobId) return NextResponse.json({ error: 'jobIdは必須です' }, { status: 400 })
 
   const job = await getJob(jobId)
-  if (!job) return NextResponse.json({ error: 'ジョブが見つかりません' }, { status: 404 })
+  if (!job) return NextResponse.json({ error: 'ジョブが見つかりません（TTL切れの可能性）' }, { status: 404 })
 
+  // debugPrompt, debugError も含めてそのまま返す
   return NextResponse.json(job)
 }
