@@ -2,7 +2,7 @@ import type { Project, Document, SiteAnalysis, TestItem, User } from '@/types'
 
 export const mockUser: User = {
   id: 'u-001',
-  email: 'yamada@shift.co.jp',
+  email: 'msok@msok.co.jp',
   name: '山田 太郎',
   role: 'admin',
 }
@@ -108,8 +108,8 @@ export const mockDocuments: Document[] = [
   {
     id: 'doc-004',
     projectId: 'proj-001',
-    filename: 'Shift_QAナレッジベース_2024.pdf',
-    category: 'shift_knowledge',
+    filename: 'MSOK_QAナレッジベース_2024.pdf',
+    category: 'MSOK_knowledge',
     subCategory: 'ガイドライン',
     fileSize: 5242880,
     mimeType: 'application/pdf',
@@ -341,7 +341,7 @@ export const categoryColors: Record<string, string> = {
 
 export const categoryLabels: Record<string, string> = {
   customer_doc: '顧客資料',
-  shift_knowledge: 'Shiftナレッジ',
+  shift_knowledge: 'MSOKナレッジ',
   source_code: 'ソースコード',
 }
 

@@ -5,7 +5,7 @@ import { Eye, EyeOff, Shield, Zap, FileCheck2 } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('yamada@shift.co.jp')
+  const [email, setEmail] = useState('masu@msok.co.jp')
   const [password, setPassword] = useState('password')
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -40,7 +40,7 @@ export default function LoginPage() {
             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
               <Shield className="w-6 h-6 text-white" />
             </div>
-            <span className="text-white font-bold text-xl tracking-wide">Shift</span>
+            <span className="text-white font-bold text-xl tracking-wide">MSOK</span>
           </div>
           <p className="text-shift-200 text-sm">品質保証のプロフェッショナル</p>
         </div>
@@ -78,7 +78,7 @@ export default function LoginPage() {
         </div>
 
         <div className="relative z-10 text-shift-400 text-xs">
-          © 2024 Shift株式会社
+          © 2026 MSOK株式会社
         </div>
       </div>
 
@@ -104,7 +104,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   className="input"
-                  placeholder="example@shift.co.jp"
+                  placeholder="example@msok.co.jp"
                   required
                 />
               </div>
@@ -155,7 +155,7 @@ export default function LoginPage() {
 
             <div className="mt-6 p-3 bg-shift-50 rounded-lg border border-shift-100">
               <p className="text-xs text-shift-700 font-medium mb-1">デモ用アカウント</p>
-              <p className="text-xs text-shift-600">メール: yamada@shift.co.jp</p>
+              <p className="text-xs text-shift-600">メール: masu@msok.co.jp</p>
               <p className="text-xs text-shift-600">パスワード: 任意</p>
             </div>
           </div>
