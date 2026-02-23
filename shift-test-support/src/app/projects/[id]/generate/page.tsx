@@ -31,7 +31,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
-  const [maxItems, setMaxItems] = useState(300)
+  const [maxItems, setMaxItems] = useState(100)
   const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
     new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
   )
@@ -46,11 +46,14 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   const [resultCount, setResultCount] = useState(0)
-  const [ragBreakdown, setRagBreakdown] = useState<{ documents: number; siteAnalysis: number; sourceCode: number } | null>(null)
+  const [ragBreakdown, setRagBreakdown] = useState<{
+    documents: number; siteAnalysis: number; sourceCode: number
+  } | null>(null)
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef = useRef(0)
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const jobIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     fetch(`/api/site-analysis?projectId=${params.id}`)
@@ -59,7 +62,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .catch(() => {})
   }, [params.id])
 
-  // クリーンアップ
   useEffect(() => () => {
     if (pollingRef.current) clearInterval(pollingRef.current)
     if (progressTimer.current) clearInterval(progressTimer.current)
@@ -68,17 +70,34 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const animateTo = (target: number) => {
     if (progressTimer.current) clearInterval(progressTimer.current)
     progressTimer.current = setInterval(() => {
-      progressRef.current = Math.min(progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target)
+      progressRef.current = Math.min(
+        progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target
+      )
       setProgress(Math.round(progressRef.current * 10) / 10)
       if (progressRef.current >= target - 0.1) clearInterval(progressTimer.current!)
     }, 150)
   }
 
-  const getTargetPages = (): PageInfo[] | null => {
-    if (targetMode === 'all' || !siteAnalysis) return null
-    return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
+  const finishSuccess = (count: number, breakdown: typeof ragBreakdown) => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    if (progressTimer.current) clearInterval(progressTimer.current)
+    progressRef.current = 100
+    setProgress(100)
+    setStageIdx(4)
+    setResultCount(count)
+    setRagBreakdown(breakdown)
+    setDone(true)
+    setGenerating(false)
   }
 
+  const finishError = (msg: string) => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    if (progressTimer.current) clearInterval(progressTimer.current)
+    setError(msg)
+    setGenerating(false)
+  }
+
+  // ポーリング開始 ─ jobIdを受け取ったらすぐ呼ぶ
   const startPolling = (jobId: string) => {
     if (pollingRef.current) clearInterval(pollingRef.current)
     pollingRef.current = setInterval(async () => {
@@ -87,34 +106,25 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         if (!res.ok) return
         const job = await res.json()
 
-        // ステージ・進捗を更新
         if (typeof job.stage === 'number') {
           setStageIdx(job.stage)
           setStageMessage(job.message || '')
           animateTo(STAGE_PROGRESS[Math.min(job.stage, STAGE_PROGRESS.length - 2)])
         }
-
         if (job.status === 'completed') {
-          clearInterval(pollingRef.current!)
-          if (progressTimer.current) clearInterval(progressTimer.current)
-          progressRef.current = 100
-          setProgress(100)
-          setStageIdx(4)
-          setResultCount(job.count ?? 0)
-          setRagBreakdown(job.breakdown ?? null)
-          setDone(true)
-          setGenerating(false)
+          finishSuccess(job.count ?? 0, job.breakdown ?? null)
         } else if (job.status === 'error') {
-          clearInterval(pollingRef.current!)
-          if (progressTimer.current) clearInterval(progressTimer.current)
-          setError(job.error || 'AI生成に失敗しました')
-          setGenerating(false)
+          finishError(job.error || 'AI生成に失敗しました')
         }
-      } catch (e) {
-        // ネットワークエラーはポーリングを継続（一時的な切断に対応）
-        console.warn('Polling error (will retry):', e)
+      } catch {
+        // 一時的なネットワークエラーは無視して継続
       }
-    }, 3000) // 3秒ごとにポーリング
+    }, 3000)
+  }
+
+  const getTargetPages = (): PageInfo[] | null => {
+    if (targetMode === 'all' || !siteAnalysis) return null
+    return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
   }
 
   const generate = async () => {
@@ -124,19 +134,21 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       return
     }
 
+    // UI初期化
     setGenerating(true)
     progressRef.current = 0
     setProgress(0)
     setStageIdx(0)
-    setStageMessage('')
+    setStageMessage('ジョブを登録中...')
     setDone(false)
     setError('')
     setRagBreakdown(null)
-    animateTo(STAGE_PROGRESS[0])
+    jobIdRef.current = null
+    animateTo(5)
 
     try {
-      // ジョブ開始（即座にjobIdが返る）
-      const res = await fetch('/api/generate/start', {
+      // Step1: jobIdを取得（この fetch は数秒で返る）
+      const startRes = await fetch('/api/generate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -147,21 +159,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         }),
       })
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error((err as { error?: string }).error || 'ジョブの開始に失敗しました')
+      const data = await startRes.json()
+
+      // /start がエラーを返した場合（環境変数未設定など）
+      if (!startRes.ok && !data.jobId) {
+        throw new Error(data.error || 'ジョブの開始に失敗しました')
       }
 
-      const { jobId } = await res.json()
-      if (!jobId) throw new Error('ジョブIDが取得できませんでした')
+      if (!data.jobId) {
+        throw new Error('jobIdが返されませんでした。サーバーログを確認してください。')
+      }
 
-      // ポーリング開始
-      startPolling(jobId)
+      jobIdRef.current = data.jobId
+
+      // 既に完了している場合（超高速で終わった場合）
+      if (data.status === 'completed') {
+        finishSuccess(data.count ?? 0, null)
+        return
+      }
+
+      // ポーリング開始（/startのレスポンスを待たずに進捗を表示）
+      animateTo(STAGE_PROGRESS[0])
+      startPolling(data.jobId)
 
     } catch (e) {
-      if (progressTimer.current) clearInterval(progressTimer.current)
-      setError(e instanceof Error ? e.message : 'AI生成に失敗しました')
-      setGenerating(false)
+      finishError(e instanceof Error ? e.message : 'AI生成に失敗しました')
     }
   }
 
@@ -186,9 +208,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
               <span className="text-sm text-gray-700 flex-1">{label}</span>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${available ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                {note}
-              </span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                available ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+              }`}>{note}</span>
             </div>
           ))}
         </div>
@@ -233,9 +255,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                       <input type="checkbox" className="w-4 h-4 accent-shift-700 flex-shrink-0"
                         checked={selectedPages.has(page.url)}
                         onChange={() => setSelectedPages(prev => {
-                          const next = new Set(prev)
-                          next.has(page.url) ? next.delete(page.url) : next.add(page.url)
-                          return next
+                          const next = new Set(prev); next.has(page.url) ? next.delete(page.url) : next.add(page.url); return next
                         })} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{page.title}</p>
@@ -267,16 +287,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <div>
               <label className="label">最大生成件数</label>
               <div className="flex gap-2 flex-wrap">
-                {[100, 200, 300, 500, 1000, 2000].map(v => (
+                {[50, 100, 200, 300, 500].map(v => (
                   <button key={v} onClick={() => setMaxItems(v)}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                       maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'
-                    }`}>{v.toLocaleString()}件</button>
+                    }`}>{v}件</button>
                 ))}
                 <input type="number" min={10} max={5000} value={maxItems}
                   onChange={e => setMaxItems(Number(e.target.value))}
                   className="input py-1.5 w-28 text-sm" />
               </div>
+              <p className="text-xs text-gray-400 mt-1">
+                ⚠️ Vercel無料プランは60秒制限。DeepSeekは遅いため <strong>50〜100件推奨</strong>。
+                大量生成はOpenAI GPT-4o-miniまたはProプランを使用してください。
+              </p>
             </div>
             <div>
               <label className="label">テスト観点</label>
@@ -338,9 +362,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </div>
             ))}
           </div>
-          <p className="text-xs text-gray-400 mt-4">
-            ※ 3秒ごとに進捗を確認しています。DeepSeekは生成に数分かかる場合があります。
-          </p>
+          {jobIdRef.current && (
+            <p className="text-xs text-gray-300 mt-3 font-mono">Job: {jobIdRef.current}</p>
+          )}
         </div>
       )}
 
@@ -349,9 +373,15 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-sm font-semibold text-red-800">生成に失敗しました</p>
-            <p className="text-xs text-red-600 mt-0.5">{error}</p>
-            <button className="btn-secondary mt-3 text-xs py-1.5" onClick={() => setError('')}>再試行</button>
+            <p className="text-sm font-semibold text-red-800">エラーが発生しました</p>
+            <p className="text-xs text-red-600 mt-0.5 break-all">{error}</p>
+            <div className="flex gap-2 mt-3">
+              <button className="btn-secondary text-xs py-1.5" onClick={() => setError('')}>再試行</button>
+              <button className="btn-secondary text-xs py-1.5"
+                onClick={() => router.push(`/projects/${params.id}/test-items`)}>
+                テスト項目書を確認
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -372,9 +402,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             </div>
           )}
           <div className="flex gap-3 justify-center">
-            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0); progressRef.current = 0 }}>
-              再生成する
-            </button>
+            <button className="btn-secondary" onClick={() => {
+              setDone(false); setProgress(0); progressRef.current = 0
+            }}>再生成する</button>
             <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
               テスト項目書を確認
             </button>
