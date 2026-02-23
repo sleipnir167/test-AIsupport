@@ -33,10 +33,12 @@ export function buildPrompts(
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
 
+  // GPT-4o-mini / Geminiは128k以上のコンテキストを持つため、大きめに設定
+  // DeepSeekも64k以上あるため問題なし
   const contextText = [
-    buildContext(docChunks,    '仕様・要件ドキュメント', 2500),
-    buildContext(siteChunks,   'サイト構造・画面情報',  2000),
-    buildContext(sourceChunks, 'ソースコード',          1500),
+    buildContext(docChunks,    '仕様・要件ドキュメント', 20000),
+    buildContext(siteChunks,   'サイト構造・画面情報',   8000),
+    buildContext(sourceChunks, 'ソースコード',           15000),
   ].join('')
 
   const pagesFocus = targetPages?.length

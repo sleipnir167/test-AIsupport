@@ -9,15 +9,12 @@ export interface VectorMetadata {
   projectId: string
   docId: string
   filename: string
-  category: string
+  category: string   // customer_doc / shift_knowledge / source_code / site_analysis
   chunkIndex: number
   text: string
-  [key: string]: string | number | boolean | null
+  pageUrl?: string   // site_analysis 時のページURL
 }
 
-/**
- * テキストをチャンク分割する
- */
 export function chunkText(text: string, chunkSize = 800, overlap = 100): string[] {
   const chunks: string[] = []
   let start = 0
@@ -30,80 +27,61 @@ export function chunkText(text: string, chunkSize = 800, overlap = 100): string[
   return chunks.filter(c => c.trim().length > 50)
 }
 
-/**
- * ドキュメントのチャンクをベクトルDBに格納する
- */
 export async function upsertChunks(
   projectId: string,
   docId: string,
   filename: string,
   category: string,
   chunks: string[],
-  extraMetadata: Record<string, any> = {} // 6つ目の引数を追加（デフォルトは空オブジェクト）
+  extraMeta: Record<string, string> = {}
 ): Promise<number> {
   const batchSize = 100
   let total = 0
-
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize)
-    
     const vectors = batch.map((text, j) => ({
       id: `${docId}-chunk-${i + j}`,
       data: text,
       metadata: {
-        projectId,
-        docId,
-        filename,
-        category,
+        projectId, docId, filename, category,
         chunkIndex: i + j,
         text,
-        ...extraMetadata, // ここで pageUrl などの追加情報がマージされます
+        ...extraMeta,
       } as VectorMetadata,
     }))
-
     await vectorIndex.upsert(vectors)
     total += batch.length
   }
-
   return total
 }
 
-/**
- * プロジェクトに関連するチャンクを検索する
- */
 export async function searchChunks(
   query: string,
   projectId: string,
-  topK = 15,
-  category?: string // 4つ目の引数を追加
+  topK = 20,
+  categoryFilter?: string
 ): Promise<VectorMetadata[]> {
-  // 基本のフィルター条件（projectIdの一致）
-  let filterString = `projectId = '${projectId}'`;
-  
-  // もしcategoryが指定されていれば、フィルター条件に追加する
-  if (category) {
-    filterString += ` AND category = '${category}'`;
-  }
+  const filter = categoryFilter
+    ? `projectId = '${projectId}' AND category = '${categoryFilter}'`
+    : `projectId = '${projectId}'`
+
+  // source_code は多様なコードが含まれるため閾値を低めに設定
+  const scoreThreshold = categoryFilter === 'source_code' ? 0.2 : 0.4
 
   const results = await vectorIndex.query<VectorMetadata>({
     data: query,
     topK,
     includeMetadata: true,
-    filter: filterString, // 動的に作成したフィルターを使用
+    filter,
   })
-
   return results
-    .filter(r => (r.score ?? 0) > 0.5) // scoreがundefinedの場合を考慮して修正
+    .filter(r => r.score > scoreThreshold)
     .map(r => r.metadata!)
     .filter(Boolean)
 }
 
-/**
- * ドキュメントのチャンクを削除する
- */
 export async function deleteDocumentChunks(docId: string, chunkCount: number): Promise<void> {
   const ids = Array.from({ length: chunkCount }, (_, i) => `${docId}-chunk-${i}`)
-  // バッチで削除
   const batchSize = 100
   for (let i = 0; i < ids.length; i += batchSize) {
     await vectorIndex.delete(ids.slice(i, i + batchSize))
