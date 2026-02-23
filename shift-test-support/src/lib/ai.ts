@@ -175,6 +175,8 @@ export function parseTestItems(content: string, projectId: string): TestItem[] {
       expectedResult: item.expectedResult || '',
       priority: (['HIGH', 'MEDIUM', 'LOW'].includes(item.priority) ? item.priority : 'MEDIUM') as TestItem['priority'],
       automatable: (['YES', 'NO', 'CONSIDER'].includes(item.automatable) ? item.automatable : 'CONSIDER') as TestItem['automatable'],
+      orderIndex: index, // 配列内での順序を保持
+      isDeleted: false,  // 初期値として false を設定
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
