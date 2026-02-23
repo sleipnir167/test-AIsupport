@@ -155,7 +155,7 @@ export function parseTestItems(content: string, projectId: string): TestItem[] {
   }>
 
   const counterMap = new Map<string, number>()
-  return rawItems.map((item) => {
+  return rawItems.map((item, index) => {
     const major = item.categoryMajor || '未分類'
     const count = (counterMap.get(major) || 0) + 1
     counterMap.set(major, count)
