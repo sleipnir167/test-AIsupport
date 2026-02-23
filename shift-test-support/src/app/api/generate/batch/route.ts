@@ -66,9 +66,9 @@ export async function POST(req: Request) {
       : baseQuery
 
     const [docChunks, siteChunks, sourceChunks] = await Promise.all([
-      searchChunks(pageQuery, projectId, 75),
-      searchChunks(pageQuery, projectId, 25, 'site_analysis'),
-      searchChunks(pageQuery, projectId, 75, 'source_code'),
+      searchChunks(pageQuery, projectId, 100),
+      searchChunks(pageQuery, projectId, 40, 'site_analysis'),
+      searchChunks(pageQuery, projectId, 100, 'source_code'),
     ])
     log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
 
