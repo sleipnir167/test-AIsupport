@@ -1,22 +1,19 @@
 import type { VectorMetadata } from './vector'
-import type { TestItem } from '@/types'
+import type { TestItem, SourceRef } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface PerspectiveWeight {
   value: string
-  count: number // 0 = 生成しない
+  count: number
 }
 
 export interface GenerateOptions {
   maxItems?: number
   perspectives?: string[]
-  perspectiveWeights?: PerspectiveWeight[] // 観点ごとの件数指定（指定時はmaxItems/perspectivesより優先）
+  perspectiveWeights?: PerspectiveWeight[]
   targetPages?: Array<{ url: string; title: string }> | null
 }
 
-/**
- * プロンプトを構築して返す（AIクライアントには依存しない）
- */
 export function buildPrompts(
   projectName: string,
   targetSystem: string,
@@ -32,27 +29,35 @@ export function buildPrompts(
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
   const sourceChunks = chunks.filter(c => c.category === 'source_code')
 
-  const buildContext = (list: VectorMetadata[], label: string, maxLen: number) => {
+  // チャンク番号をIDとして採番（プロンプト内で参照用）
+  const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
     if (!list.length) return ''
     const text = list
-      .map((c, i) => `[${label}${i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
+      .map((c, i) => `[REF-${offset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
       .join('\n\n')
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
 
-  // コンテキストサイズ：Gemini等の高速モデルは大きくても問題ない
-  // GPT-4o-miniの場合は大きすぎると60秒タイムアウトになるが、バッチ方式のため許容
   const contextText = [
-    buildContext(docChunks,    '仕様・要件ドキュメント', 10000),
-    buildContext(siteChunks,   'サイト構造・画面情報',    4000),
-    buildContext(sourceChunks, 'ソースコード',            8000),
+    buildContext(docChunks,    '仕様・要件ドキュメント', 60000, 0),
+    buildContext(siteChunks,   'サイト構造・画面情報',   15000, docChunks.length),
+    buildContext(sourceChunks, 'ソースコード',            50000, docChunks.length + siteChunks.length),
   ].join('')
 
+  // 出典情報の対応表（REF番号 → ファイル名・カテゴリ・抜粋）を構築
+  const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
+  const refMap = allChunksOrdered.map((c, i) => ({
+    refId: `REF-${i + 1}`,
+    filename: c.filename,
+    category: c.category,
+    excerpt: c.text.slice(0, 200),
+    pageUrl: c.pageUrl,
+  }))
+
   const pagesFocus = targetPages?.length
-    ? `\n\n## テスト対象画面（以下の画面に絞ってテスト項目を生成してください）\n${targetPages.map(p => `- ${p.title} (${p.url})`).join('\n')}`
+    ? `\n\n## テスト対象画面\n${targetPages.map(p => `- ${p.title} (${p.url})`).join('\n')}`
     : ''
 
-  // テスト観点の指示文を組み立て
   let perspectivesInstruction: string
   if (perspectiveWeights && perspectiveWeights.length > 0) {
     const active = perspectiveWeights.filter(w => w.count > 0)
@@ -70,13 +75,18 @@ export function buildPrompts(
   const systemPrompt = `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
 提供されたシステム仕様・設計書・サイト構造・ソースコードを分析し、品質を担保するための網羅的なテスト項目書を日本語で作成してください。
 必ずJSON配列のみで回答し、マークダウンのコードブロックや説明文は一切含めないでください。
-件数は必ず指定された数を出力してください。少なすぎる場合は網羅性が不足しています。`
+件数は必ず指定された数を出力してください。`
+
+  const refMapStr = refMap.length > 0
+    ? `\n\n## 参照資料マッピング（sourceRefsに使用可能なREF番号）\n${refMap.slice(0, 30).map(r => `${r.refId}: ${r.filename} [${r.category}]`).join('\n')}`
+    : ''
 
   const userPrompt = `プロジェクト名: ${projectName}
 テスト対象システム: ${targetSystem}
 ${perspectivesInstruction}
-【重要】生成件数: ちょうど${actualMaxItems}件を出力してください。${actualMaxItems}件未満は不合格です。各機能・画面・操作パターン・エラーケースを漏れなく列挙してください。
+【重要】生成件数: ちょうど${actualMaxItems}件を出力してください。${actualMaxItems}件未満は不合格です。
 ${pagesFocus}
+${refMapStr}
 
 【参考資料（RAG検索結果）】${contextText || '\n※ 参考資料なし。一般的なWebシステムとして生成してください。'}
 
@@ -92,18 +102,23 @@ ${pagesFocus}
     "steps": ["手順1", "手順2", "手順3"],
     "expectedResult": "期待結果",
     "priority": "HIGH または MEDIUM または LOW",
-    "automatable": "YES または NO または CONSIDER"
+    "automatable": "YES または NO または CONSIDER",
+    "sourceRefs": [
+      {
+        "refId": "REF-1",
+        "reason": "このテスト項目を導出した根拠（50文字以内）"
+      }
+    ]
   }
-]`
+]
 
-  return { systemPrompt, userPrompt }
+sourceRefsには、このテスト項目の根拠となった参照資料のREF番号と理由を1〜3件記載してください。参照資料がない場合は空配列[]にしてください。`
+
+  return { systemPrompt, userPrompt, refMap } as { systemPrompt: string; userPrompt: string; refMap: typeof refMap }
 }
 
-/**
- * JSON文字列内の不正な制御文字・改行をエスケープして修復する
- */
 function sanitizeJson(raw: string): string {
-  return raw.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
+  return raw.replace(/\"((?:[^\"\\]|\\.)*)\"/g, (match) => {
     return match
       .replace(/\n/g, '\\n')
       .replace(/\r/g, '\\r')
@@ -112,9 +127,6 @@ function sanitizeJson(raw: string): string {
   })
 }
 
-/**
- * 不完全なJSON配列を末尾から切り詰めて修復する
- */
 function repairJsonArray(raw: string): string {
   let s = raw.replace(/```(?:json)?/gi, '').trim()
   const start = s.indexOf('[')
@@ -131,10 +143,11 @@ function repairJsonArray(raw: string): string {
   throw new Error('JSONの修復に失敗しました')
 }
 
-/**
- * AIのテキスト応答をパースしてTestItem配列に変換する
- */
-export function parseTestItems(content: string, projectId: string): TestItem[] {
+export function parseTestItems(
+  content: string,
+  projectId: string,
+  refMap: Array<{ refId: string; filename: string; category: string; excerpt: string; pageUrl?: string }> = []
+): TestItem[] {
   let jsonStr: string
   try {
     jsonStr = repairJsonArray(content)
@@ -152,15 +165,42 @@ export function parseTestItems(content: string, projectId: string): TestItem[] {
     expectedResult: string
     priority: string
     automatable: string
+    sourceRefs?: Array<{ refId: string; reason: string }>
   }>
 
+  // REF番号 → メタ情報の索引
+  const refIndex = new Map(refMap.map(r => [r.refId, r]))
+
   const counterMap = new Map<string, number>()
-  return rawItems.map((item, index) => {
+  return rawItems.map((item) => {
     const major = item.categoryMajor || '未分類'
     const count = (counterMap.get(major) || 0) + 1
     counterMap.set(major, count)
     const prefix = major.slice(0, 2)
     const testId = `${prefix}-${String(count).padStart(3, '0')}`
+
+    // sourceRefsをSourceRef[]に変換
+    const sourceRefs: SourceRef[] = []
+    if (Array.isArray(item.sourceRefs)) {
+      for (const sr of item.sourceRefs) {
+        const meta = refIndex.get(sr.refId)
+        if (meta) {
+          sourceRefs.push({
+            filename: meta.filename,
+            category: meta.category,
+            excerpt: meta.excerpt,
+            pageUrl: meta.pageUrl,
+          })
+        } else if (sr.refId) {
+          // REF番号が見つからない場合でもreasonを残す
+          sourceRefs.push({
+            filename: sr.refId,
+            category: 'unknown',
+            excerpt: sr.reason || '',
+          })
+        }
+      }
+    }
 
     return {
       id: uuidv4(),
@@ -175,10 +215,9 @@ export function parseTestItems(content: string, projectId: string): TestItem[] {
       expectedResult: item.expectedResult || '',
       priority: (['HIGH', 'MEDIUM', 'LOW'].includes(item.priority) ? item.priority : 'MEDIUM') as TestItem['priority'],
       automatable: (['YES', 'NO', 'CONSIDER'].includes(item.automatable) ? item.automatable : 'CONSIDER') as TestItem['automatable'],
-      orderIndex: index, // 配列内での順序を保持
-      isDeleted: false,  // 初期値として false を設定
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      orderIndex: 0,
+      isDeleted: false,
+      sourceRefs: sourceRefs.length > 0 ? sourceRefs : undefined,
     }
   })
 }

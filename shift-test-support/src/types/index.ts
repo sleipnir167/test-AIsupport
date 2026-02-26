@@ -67,6 +67,13 @@ export type Priority = 'HIGH' | 'MEDIUM' | 'LOW'
 export type Automatable = 'YES' | 'NO' | 'CONSIDER'
 export type TestPerspective = '機能テスト' | '正常系' | '異常系' | '境界値' | 'セキュリティ' | '操作性' | '性能'
 
+export interface SourceRef {
+  filename: string      // 出典ファイル名（例: "要件定義書.pdf"）
+  category: string      // customer_doc / MSOK_knowledge / source_code / site_analysis
+  excerpt: string       // 該当箇所の抜粋（200文字程度）
+  pageUrl?: string      // サイト分析の場合はURL
+}
+
 export interface TestItem {
   id: string
   projectId: string
@@ -82,6 +89,7 @@ export interface TestItem {
   automatable: Automatable
   orderIndex: number
   isDeleted: boolean
+  sourceRefs?: SourceRef[]  // 出典情報（AIが参照したドキュメント）
 }
 
 // ユーザー

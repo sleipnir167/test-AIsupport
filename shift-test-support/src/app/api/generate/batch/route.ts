@@ -28,7 +28,7 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
       baseURL: 'https://openrouter.ai/api/v1',
       defaultHeaders: {
         'HTTP-Referer': 'https://shift-test-support.vercel.app',
-        'X-Title': 'MSOK AI Test Support',
+        'X-Title': 'Shift AI Test Support',
       },
     }),
     model: modelOverride || process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-001',
@@ -82,10 +82,10 @@ export async function POST(req: Request) {
       return true
     })
 
-    const { systemPrompt, userPrompt } = buildPrompts(
+    const { systemPrompt, userPrompt, refMap } = buildPrompts(
       project.name, project.targetSystem, allChunks,
       { maxItems: batchSize, perspectives, perspectiveWeights, targetPages }
-    )
+    ) as ReturnType<typeof buildPrompts> & { refMap: Array<{ refId: string; filename: string; category: string; excerpt: string; pageUrl?: string }> }
     log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
     log(jobId, '[SYSTEM PROMPT]\n' + systemPrompt)
     log(jobId, '[USER PROMPT]\n' + userPrompt.slice(0, 2000))
@@ -167,7 +167,7 @@ export async function POST(req: Request) {
     log(jobId, `Stream done: ${charCount}chars aborted=${aborted}`)
     log(jobId, `[AI OUTPUT preview]\n${fullContent.slice(0, 500)}`)
 
-    const items = parseTestItems(fullContent, projectId)
+    const items = parseTestItems(fullContent, projectId, refMap ?? [])
     log(jobId, `Parsed: ${items.length} items`)
 
     if (items.length > 0) {

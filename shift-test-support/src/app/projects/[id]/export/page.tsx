@@ -13,7 +13,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
   const [includeColumns, setIncludeColumns] = useState({
     testId: true, categoryMajor: true, categoryMinor: true, testPerspective: true,
     testTitle: true, precondition: true, steps: true, expectedResult: true,
-    priority: true, automatable: true, result: true, notes: true,
+    priority: true, automatable: true, sourceFile: true, sourceExcerpt: true, result: true, notes: true,
   })
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded] = useState(false)
@@ -22,7 +22,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
     testId: 'テストID', categoryMajor: '大分類', categoryMinor: '中分類',
     testPerspective: 'テスト観点', testTitle: 'テスト項目名', precondition: '事前条件',
     steps: 'テスト手順', expectedResult: '期待結果', priority: '優先度',
-    automatable: '自動化可否', result: '実施結果', notes: '備考',
+    automatable: '自動化可否', sourceFile: '出典ファイル', sourceExcerpt: '出典内容', result: '実施結果', notes: '備考',
   }
 
   useEffect(() => {
@@ -48,6 +48,8 @@ export default function ExportPage({ params }: { params: { id: string } }) {
     if (includeColumns.expectedResult) row.push(item.expectedResult)
     if (includeColumns.priority) row.push(priorityLabels[item.priority] ?? item.priority)
     if (includeColumns.automatable) row.push(automatableLabels[item.automatable] ?? item.automatable)
+    if (includeColumns.sourceFile) row.push(item.sourceRefs?.map(r => r.filename).join(' / ') ?? '')
+    if (includeColumns.sourceExcerpt) row.push(item.sourceRefs?.map(r => r.excerpt).join('\n---\n') ?? '')
     if (includeColumns.result) row.push('')
     if (includeColumns.notes) row.push('')
     return row
@@ -65,7 +67,7 @@ export default function ExportPage({ params }: { params: { id: string } }) {
       .filter(([k]) => includeColumns[k as keyof typeof includeColumns])
       .map(([, v]) => v)
 
-    const colWidths = [8, 16, 16, 14, 36, 20, 40, 30, 8, 10, 10, 12]
+    const colWidths = [8, 16, 16, 14, 36, 20, 40, 30, 8, 10, 24, 40, 10, 12]
 
     const applyHeaderStyle = (ws: ReturnType<typeof XLSX.utils.aoa_to_sheet>, headerCount: number) => {
       ws['!cols'] = headers.map((_, i) => ({ wch: colWidths[i] || 12 }))
