@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Upload, FileText, Trash2, RefreshCw, FileSpreadsheet,
-  FileCode2, Archive, CheckCircle2, Clock, AlertCircle, Plus, Loader2
+  FileCode2, Archive, CheckCircle2, Clock, AlertCircle, Plus, Loader2, Download, ExternalLink
 } from 'lucide-react'
 import { formatFileSize, formatDateTime, categoryColors, categoryLabels, docStatusConfig } from '@/lib/mock-data'
 import type { Document, DocumentCategory, DocumentSubCategory } from '@/types'
@@ -109,7 +109,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
                   setSelectedSubCategory(subCategoryOptions[cat][0])
                 }}>
                 <option value="customer_doc">顧客資料</option>
-                <option value="MSOK_knowledge">Shiftナレッジ</option>
+                <option value="MSOK_knowledge">MSOKナレッジ</option>
                 <option value="source_code">ソースコード</option>
               </select>
             </div>
@@ -193,6 +193,20 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
                         className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-red-400 transition-all">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
+                      {doc.blobUrl && (
+                        <>
+                          <a href={doc.blobUrl} target="_blank" rel="noopener noreferrer"
+                            className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 text-blue-400 transition-all"
+                            title="ブラウザで開く">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                          <a href={doc.blobUrl} download={doc.filename}
+                            className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-green-500 transition-all"
+                            title="ダウンロード">
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}

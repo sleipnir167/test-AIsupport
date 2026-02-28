@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Plus, Search, FolderOpen, ChevronRight, FileText,
-  ClipboardList, Sparkles, TrendingUp, Clock, Loader2
+  ClipboardList, Sparkles, TrendingUp, Clock, Loader2, Trash2, AlertTriangle
 } from 'lucide-react'
 import AppHeader from '@/components/layout/AppHeader'
 import { statusLabels, statusColors, formatDate } from '@/lib/mock-data'
@@ -18,6 +18,8 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false)
   const [newProject, setNewProject] = useState({ name: '', description: '', targetSystem: '' })
   const [error, setError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fetchProjects = async () => {
     try {
@@ -58,10 +60,7 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newProject),
       })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || '作成に失敗しました')
-      }
+      if (!res.ok) throw new Error((await res.json()).error || '作成に失敗しました')
       const created = await res.json()
       setProjects(prev => [created, ...prev])
       setShowModal(false)
@@ -70,6 +69,26 @@ export default function DashboardPage() {
       setError(e instanceof Error ? e.message : '作成に失敗しました')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/projects/${deleteTarget.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('削除に失敗しました')
+      setProjects(prev => prev.filter(p => p.id !== deleteTarget.id))
+      // localStorageのメタ情報もクリア
+      try {
+        localStorage.removeItem(`designMeta_${deleteTarget.id}`)
+        localStorage.removeItem(`reviewResult_${deleteTarget.id}`)
+      } catch {}
+      setDeleteTarget(null)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '削除に失敗しました')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -113,20 +132,18 @@ export default function DashboardPage() {
           ) : (
             <div className="divide-y divide-gray-100">
               {filtered.map(project => (
-                <Link key={project.id} href={`/projects/${project.id}`}>
-                  <div className="p-4 hover:bg-gray-50 transition-colors group">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1 min-w-0">
-                        <div className="w-10 h-10 bg-shift-100 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-shift-200 transition-colors">
-                          <FolderOpen className="w-5 h-5 text-shift-700" />
+                <div key={project.id} className="flex items-center group hover:bg-gray-50 transition-colors">
+                  <Link href={`/projects/${project.id}`} className="flex-1 min-w-0">
+                    <div className="p-4 flex items-center gap-4">
+                      <div className="w-10 h-10 bg-shift-100 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-shift-200 transition-colors">
+                        <FolderOpen className="w-5 h-5 text-shift-700" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <h3 className="font-semibold text-gray-900 text-sm">{project.name}</h3>
+                          <span className={clsx('badge', statusColors[project.status])}>{statusLabels[project.status]}</span>
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                            <h3 className="font-semibold text-gray-900 text-sm">{project.name}</h3>
-                            <span className={clsx('badge', statusColors[project.status])}>{statusLabels[project.status]}</span>
-                          </div>
-                          <p className="text-xs text-gray-500 truncate">{project.description || project.targetSystem}</p>
-                        </div>
+                        <p className="text-xs text-gray-500 truncate">{project.description || project.targetSystem}</p>
                       </div>
                       <div className="hidden md:flex items-center gap-6 text-xs text-gray-500 flex-shrink-0 ml-4">
                         <div className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /><span>{project.documentCount}件</span></div>
@@ -135,8 +152,15 @@ export default function DashboardPage() {
                         <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-shift-600 transition-colors" />
                       </div>
                     </div>
-                  </div>
-                </Link>
+                  </Link>
+                  {/* 削除ボタン */}
+                  <button
+                    onClick={e => { e.preventDefault(); setDeleteTarget(project) }}
+                    className="opacity-0 group-hover:opacity-100 mx-3 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all flex-shrink-0"
+                    title="プロジェクトを削除">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               ))}
               {filtered.length === 0 && (
                 <div className="py-16 text-center text-gray-400">
@@ -148,6 +172,8 @@ export default function DashboardPage() {
           )}
         </div>
       </main>
+
+      {/* 新規作成モーダル */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowModal(false)}>
           <div className="card w-full max-w-md p-6 animate-slide-up" onClick={e => e.stopPropagation()}>
@@ -175,6 +201,44 @@ export default function DashboardPage() {
               <button className="btn-primary flex-1 justify-center" onClick={handleCreate} disabled={creating}>
                 {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                 {creating ? '作成中...' : '作成する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 削除確認モーダル */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDeleteTarget(null)}>
+          <div className="card w-full max-w-md p-6 animate-slide-up" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">プロジェクトを削除</h3>
+                <p className="text-xs text-gray-500">この操作は取り消せません</p>
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-5">
+              <p className="text-sm font-semibold text-red-900">{deleteTarget.name}</p>
+              <p className="text-xs text-red-700 mt-1">{deleteTarget.targetSystem}</p>
+              <div className="flex gap-4 mt-2 text-xs text-red-600">
+                <span>ドキュメント: {deleteTarget.documentCount}件</span>
+                <span>テスト項目: {deleteTarget.testItemCount}件</span>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-5">
+              プロジェクトに紐づくドキュメント・テスト項目・RAGデータがすべて削除されます。本当に削除しますか？
+            </p>
+            <div className="flex gap-3">
+              <button className="btn-secondary flex-1 justify-center" onClick={() => setDeleteTarget(null)}>キャンセル</button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-2 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-colors">
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deleting ? '削除中...' : '削除する'}
               </button>
             </div>
           </div>

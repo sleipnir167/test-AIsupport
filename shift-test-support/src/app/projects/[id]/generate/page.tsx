@@ -137,6 +137,31 @@ interface JobDebug {
   breakdown?: { documents: number; siteAnalysis: number; sourceCode: number }
 }
 
+// ─── ツールチップ付きポリシーボタン ──────────────────────────
+function PolicyTipButton({ value, tip, active, onClick, activeClass, inactiveClass }: {
+  value: string; tip: string; active: boolean; onClick: () => void
+  activeClass: string; inactiveClass: string
+}) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="relative">
+      <button
+        onClick={onClick}
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active ? activeClass : inactiveClass}`}>
+        {active ? '✓ ' : ''}{value}
+      </button>
+      {show && (
+        <div className="absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-900 text-white text-xs rounded-xl p-3 shadow-xl pointer-events-none leading-relaxed whitespace-normal">
+          {tip}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
 
@@ -166,7 +191,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [showDebug, setShowDebug] = useState(false)
   const [showDesignMeta, setShowDesignMeta] = useState(false)
 
-  // テスト設計メタ情報
+  // テスト設計メタ情報（localStorageから復元）
   const [industry, setIndustry] = useState<string>('SaaS')
   const [systemCharacteristics, setSystemCharacteristics] = useState<Set<string>>(new Set())
   const [designApproaches, setDesignApproaches] = useState<Set<string>>(new Set(['リスクベースドテスト']))
@@ -197,7 +222,6 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       .then(r => r.json())
       .then(data => { if (data?.id) setSiteAnalysis(data) })
       .catch(() => {})
-    // ソースコード取込状況を取得
     fetch(`/api/documents?projectId=${params.id}`)
       .then(r => r.json())
       .then((docs: Array<{ category: string; chunkCount?: number }>) => {
@@ -207,6 +231,16 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         setSourceCodeChunks(srcDocs.reduce((s, d) => s + (d.chunkCount ?? 0), 0))
       })
       .catch(() => {})
+    // localStorageからテスト設計ポリシーを復元
+    try {
+      const saved = localStorage.getItem(`designMeta_${params.id}`)
+      if (saved) {
+        const meta = JSON.parse(saved)
+        if (meta.industry) setIndustry(meta.industry)
+        if (meta.systemCharacteristics) setSystemCharacteristics(new Set(meta.systemCharacteristics))
+        if (meta.designApproaches) setDesignApproaches(new Set(meta.designApproaches))
+      }
+    } catch {}
   }, [params.id])
 
   useEffect(() => () => {
@@ -248,6 +282,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       perspectives: Array.from(selectedPerspectives),
     }
     try { localStorage.setItem(`designMeta_${params.id}`, JSON.stringify(meta)) } catch {}
+    // テスト再生成時はレビュー結果をクリア
+    try { localStorage.removeItem(`reviewResult_${params.id}`) } catch {}
   }
 
   const finishError = (msg: string, job?: JobDebug) => {
@@ -645,19 +681,26 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         </button>
         {showDesignMeta && (
           <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
-            <p className="text-xs text-gray-400">ここで設定した情報は生成後にレビュータブで活用され、業界特性に応じた品質評価を行います。</p>
+            <p className="text-xs text-gray-400">設定した情報は生成後にレビュータブで活用され、業界特性に応じた品質評価を行います。<br />各ボタンにマウスを当てると説明が表示されます。</p>
 
             {/* 対象業界 */}
             <div>
               <label className="label">対象業界</label>
               <div className="flex flex-wrap gap-2">
-                {(['金融', '医療', 'EC', 'SaaS', '製造', '公共', 'その他'] as const).map(v => (
-                  <button key={v} onClick={() => setIndustry(v)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${industry === v
-                      ? 'bg-shift-800 text-white border-shift-800'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
-                    {v}
-                  </button>
+                {([
+                  { v: '金融',   tip: '銀行・証券・保険など。コンプライアンス・監査証跡・取引整合性が重要' },
+                  { v: '医療',   tip: '電子カルテ・医療機器連携など。患者安全・データ完全性・法規制準拠が最重要' },
+                  { v: 'EC',     tip: 'ECサイト・決済システムなど。カート・在庫・決済フロー・高負荷耐性が重要' },
+                  { v: 'SaaS',   tip: 'マルチテナントSaaS。テナント分離・API品質・認証・スケーラビリティが重要' },
+                  { v: '製造',   tip: 'MES・ERPなど。ロット管理・トレーサビリティ・工程連携の整合性が重要' },
+                  { v: '公共',   tip: '行政システムなど。アクセシビリティ・個人情報保護・長期運用安定性が重要' },
+                  { v: 'その他', tip: '上記以外の業界。汎用的なテスト設計を行います' },
+                ] as const).map(({ v, tip }) => (
+                  <PolicyTipButton key={v} value={v} tip={tip}
+                    active={industry === v}
+                    onClick={() => setIndustry(v)}
+                    activeClass="bg-shift-800 text-white border-shift-800"
+                    inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-shift-400" />
                 ))}
               </div>
             </div>
@@ -666,17 +709,23 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <div>
               <label className="label">システム特性（複数可）</label>
               <div className="flex flex-wrap gap-2">
-                {(['セキュリティ重要', '高可用性要求', '並行処理あり', 'リアルタイム処理', '大規模データ', '外部連携多数'] as const).map(v => {
+                {([
+                  { v: 'セキュリティ重要',  tip: '認証・認可・暗号化・SQLi/XSS防御など。OWASPベースのセキュリティテストを重点的に生成します' },
+                  { v: '高可用性要求',       tip: '24/365稼働・フェイルオーバー・RPO/RTOが厳しく定義されているシステム。障害回復テストを追加します' },
+                  { v: '並行処理あり',       tip: '複数ユーザーが同時にデータを更新する環境。競合・デッドロック・排他制御テストを追加します' },
+                  { v: 'リアルタイム処理',  tip: 'WebSocket・ストリーミングなど。遅延・タイムアウト・同期テストを追加します' },
+                  { v: '大規模データ',       tip: '大量レコードの検索・集計が必要。パフォーマンス・ページング・インデックステストを追加します' },
+                  { v: '外部連携多数',       tip: 'API・外部サービスとの連携が多い。エラーハンドリング・タイムアウト・冪等性テストを追加します' },
+                ] as const).map(({ v, tip }) => {
                   const active = systemCharacteristics.has(v)
                   return (
-                    <button key={v} onClick={() => setSystemCharacteristics(prev => {
-                      const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
-                    })}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active
-                        ? 'bg-red-100 text-red-800 border-red-300'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-red-300'}`}>
-                      {active ? '✓ ' : ''}{v}
-                    </button>
+                    <PolicyTipButton key={v} value={v} tip={tip}
+                      active={active}
+                      onClick={() => setSystemCharacteristics(prev => {
+                        const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
+                      })}
+                      activeClass="bg-red-100 text-red-800 border-red-300"
+                      inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-red-300" />
                   )
                 })}
               </div>
@@ -686,17 +735,23 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
             <div>
               <label className="label">テスト設計アプローチ（複数可）</label>
               <div className="flex flex-wrap gap-2">
-                {(['リスクベースドテスト', 'セキュリティ重点設計', '境界値分析中心', '状態遷移重視', 'ユーザビリティ重点', '性能重点'] as const).map(v => {
+                {([
+                  { v: 'リスクベースドテスト',  tip: '欠陥リスクが高い機能から優先的にテスト設計。工数対効果が高く、実務で広く採用されている手法です' },
+                  { v: 'セキュリティ重点設計',  tip: 'OWASP Top10・認証フロー・入力検証・セッション管理を重点的にカバーする設計方針です' },
+                  { v: '境界値分析中心',         tip: '入力値の境界（最小・最大・境界前後）を体系的に網羅。数値・文字数・日付入力に特に有効です' },
+                  { v: '状態遷移重視',            tip: 'ワークフロー・ステータス遷移を状態遷移図で網羅。申請フロー・注文状態などに有効な設計手法です' },
+                  { v: 'ユーザビリティ重点',      tip: 'UI/UX・操作性・エラーメッセージの分かりやすさを重点評価。ユーザー操作視点でテストを設計します' },
+                  { v: '性能重点',                tip: '応答時間・スループット・同時接続数・メモリ使用量を定量的に評価するテストを設計します' },
+                ] as const).map(({ v, tip }) => {
                   const active = designApproaches.has(v)
                   return (
-                    <button key={v} onClick={() => setDesignApproaches(prev => {
-                      const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
-                    })}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active
-                        ? 'bg-blue-100 text-blue-800 border-blue-300'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
-                      {active ? '✓ ' : ''}{v}
-                    </button>
+                    <PolicyTipButton key={v} value={v} tip={tip}
+                      active={active}
+                      onClick={() => setDesignApproaches(prev => {
+                        const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
+                      })}
+                      activeClass="bg-blue-100 text-blue-800 border-blue-300"
+                      inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-blue-300" />
                   )
                 })}
               </div>

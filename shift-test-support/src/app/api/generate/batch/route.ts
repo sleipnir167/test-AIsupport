@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
-import { buildPrompts, parseTestItems } from '@/lib/ai'
+import { buildPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
 import OpenAI from 'openai'
 import type { PageInfo } from '@/types'
 
@@ -82,10 +82,11 @@ export async function POST(req: Request) {
       return true
     })
 
-    const { systemPrompt, userPrompt, refMap } = buildPrompts(
+    const result: BuildPromptsResult = buildPrompts(
       project.name, project.targetSystem, allChunks,
       { maxItems: batchSize, perspectives, perspectiveWeights, targetPages }
-    ) as ReturnType<typeof buildPrompts> & { refMap: Array<{ refId: string; filename: string; category: string; excerpt: string; pageUrl?: string }> }
+    )
+    const { systemPrompt, userPrompt, refMap } = result
     log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
     log(jobId, '[SYSTEM PROMPT]\n' + systemPrompt)
     log(jobId, '[USER PROMPT]\n' + userPrompt.slice(0, 2000))
