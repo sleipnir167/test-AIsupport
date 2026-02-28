@@ -142,6 +142,14 @@ export interface CoverageMissing {
   relatedStandard: string
 }
 
+export interface PerspectiveHeatmapCell {
+  perspective: string        // テスト観点名
+  count: number             // 実際の件数
+  ratio: number             // 全体に占める割合 0-1
+  biasLevel: 'over' | 'balanced' | 'under'  // 過多・適正・不足
+  recommendation: string    // 推奨コメント
+}
+
 export interface ReviewResult {
   id: string
   projectId: string
@@ -151,10 +159,13 @@ export interface ReviewResult {
   targetSource: 'generated' | 'excel'
   totalItems: number
   coverageScore: CoverageScore
+  scoreReason: string            // スコアを付けた根拠・説明
+  overallSummary: string         // 総評
   missingPerspectives: string[]
   defectRiskAnalysis: string
   improvementSuggestions: string[]
   heatmap: HeatmapCell[]
+  perspectiveHeatmap: PerspectiveHeatmapCell[]   // 観点カバレッジヒートマップ
   coverageMissingAreas: CoverageMissing[]
   designMeta?: DesignMeta
 }

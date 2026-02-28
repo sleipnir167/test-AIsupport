@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
-import type { TestItem, DesignMeta, ReviewResult, ExcelCompareResult, CoverageScore, HeatmapCell, CoverageMissing } from '@/types'
+import type { TestItem, DesignMeta, ReviewResult, ExcelCompareResult, CoverageScore, PerspectiveHeatmapCell } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
 export const maxDuration = 60
@@ -9,22 +9,61 @@ export const dynamic = 'force-dynamic'
 function createClient(modelId: string): { client: OpenAI; model: string } {
   const isOpenAI = modelId.startsWith('gpt-') || modelId.startsWith('openai/')
   if (isOpenAI && process.env.OPENAI_API_KEY) {
-    return {
-      client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-      model: modelId.replace('openai/', ''),
-    }
+    return { client: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), model: modelId.replace('openai/', '') }
   }
   return {
     client: new OpenAI({
       apiKey: process.env.OPENROUTER_API_KEY!,
       baseURL: 'https://openrouter.ai/api/v1',
-      defaultHeaders: {
-        'HTTP-Referer': 'https://msok-test-support.vercel.app',
-        'X-Title': 'MSOK AI Test Support',
-      },
+      defaultHeaders: { 'HTTP-Referer': 'https://msok-test-support.vercel.app', 'X-Title': 'MSOK AI Test Support' },
     }),
     model: modelId,
   }
+}
+
+// 観点カバレッジヒートマップを計算（AIに頼らずロジックで算出）
+function calcPerspectiveHeatmap(items: TestItem[]): PerspectiveHeatmapCell[] {
+  const ALL_PERSPECTIVES = ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性', '性能']
+  const total = items.length || 1
+  const countMap = new Map<string, number>()
+  ALL_PERSPECTIVES.forEach(p => countMap.set(p, 0))
+  items.forEach(t => {
+    const p = t.testPerspective
+    if (countMap.has(p)) countMap.set(p, (countMap.get(p) ?? 0) + 1)
+  })
+
+  // 理想的な配分（業界標準的な比率）
+  const idealRatio: Record<string, number> = {
+    '機能テスト': 0.25, '正常系': 0.20, '異常系': 0.20,
+    '境界値': 0.12, 'セキュリティ': 0.10, '操作性': 0.08, '性能': 0.05,
+  }
+
+  return ALL_PERSPECTIVES.map(p => {
+    const count = countMap.get(p) ?? 0
+    const ratio = count / total
+    const ideal = idealRatio[p] ?? 0.1
+    const deviation = ratio - ideal
+
+    let biasLevel: 'over' | 'balanced' | 'under'
+    let recommendation: string
+
+    if (deviation > 0.1) {
+      biasLevel = 'over'
+      recommendation = `全体の${Math.round(ratio * 100)}%（${count}件）と過多です。理想配分は${Math.round(ideal * 100)}%程度。他観点に振り分けを検討してください。`
+    } else if (deviation < -0.07) {
+      biasLevel = 'under'
+      if (count === 0) {
+        recommendation = `テストが0件です。この観点は未カバーです。追加を強く推奨します。`
+      } else {
+        recommendation = `全体の${Math.round(ratio * 100)}%（${count}件）と少なめです。理想は${Math.round(ideal * 100)}%程度（約${Math.round(total * ideal)}件）。`
+      }
+    } else {
+      biasLevel = 'balanced'
+      recommendation = `${count}件（${Math.round(ratio * 100)}%）。適切なカバレッジです。`
+    }
+
+    return { perspective: p, count, ratio, biasLevel, recommendation }
+  })
 }
 
 // ─── 単一ファイルレビュー ──────────────────────────────────────
@@ -37,8 +76,7 @@ async function runSingleReview(
 ): Promise<ReviewResult> {
   const { client, model } = createClient(reviewModelId)
 
-  const metaContext = designMeta
-    ? `
+  const metaContext = designMeta ? `
 【テスト設計メタ情報】
 - 対象業界: ${designMeta.industry}
 - システム特性: ${designMeta.systemCharacteristics.join('、')}
@@ -46,33 +84,37 @@ async function runSingleReview(
 - 使用モデル: ${designMeta.modelLabel}
 - 生成件数: ${designMeta.maxItems}件
 - テスト観点: ${designMeta.perspectives.join('、')}
-`
-    : ''
-
-  const itemsSummary = items.slice(0, 200).map(t =>
-    `[${t.testId}] ${t.categoryMajor} / ${t.categoryMinor} / ${t.testPerspective}: ${t.testTitle}`
-  ).join('\n')
+` : ''
 
   const perspectives = [...new Set(items.map(t => t.testPerspective))]
   const majors = [...new Set(items.map(t => t.categoryMajor))]
+  const perspCountMap: Record<string, number> = {}
+  items.forEach(t => { perspCountMap[t.testPerspective] = (perspCountMap[t.testPerspective] ?? 0) + 1 })
+  const perspBreakdown = Object.entries(perspCountMap).map(([k, v]) => `${k}:${v}件`).join('、')
+
+  const itemsSummary = items.slice(0, 150).map(t =>
+    `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`
+  ).join('\n')
 
   const systemPrompt = `あなたはソフトウェアテスト品質保証の第三者評価専門家です。
 ISO/IEC 25010、ISO/IEC/IEEE 29119、OWASP ASVS、ISTQBの各標準に精通し、
 テスト設計の妥当性を定量的かつ客観的に評価します。
 自己正当化バイアスを排除し、第三者視点で厳正に評価してください。
-必ずJSON形式のみで回答し、説明文やコードブロックは含めないでください。`
+必ずJSON形式のみで回答し、説明文やコードブロックは含めないでください。
+improvementSuggestions と coverageMissingAreas の suggestedTests には、
+現場エンジニアが「なるほど、こういうテストか」と即理解できる具体的なテストケース例を必ず含めてください。`
 
   const userPrompt = `以下のテスト設計を第三者評価してください。
 ${metaContext}
 【テスト項目概要】
 総件数: ${items.length}件
 カテゴリ: ${majors.join('、')}
-テスト観点: ${perspectives.join('、')}
+テスト観点別件数: ${perspBreakdown}
 
-【テスト項目リスト（先頭200件）】
+【テスト項目リスト（先頭150件）】
 ${itemsSummary}
 
-以下の形式でJSONのみ出力してください:
+以下の形式でJSONのみ出力してください（コードブロック不要）:
 {
   "coverageScore": {
     "iso25010": 0.0から1.0,
@@ -80,35 +122,43 @@ ${itemsSummary}
     "owasp": 0.0から1.0,
     "istqb": 0.0から1.0
   },
-  "missingPerspectives": ["不足している観点1", "不足している観点2"],
-  "defectRiskAnalysis": "欠陥混入リスク分析の説明文（300文字以内）",
-  "improvementSuggestions": ["改善提案1", "改善提案2", "改善提案3"],
+  "scoreReason": "各スコアを付けた根拠を具体的に説明（300文字以内）。どの観点が高い/低いスコアになった理由を明記",
+  "overallSummary": "テスト設計全体の総評（400文字以内）。強みと弱みを明確に。業界・システム特性への適合度も含める",
+  "missingPerspectives": [
+    "【観点名】具体的な欠落内容と、その影響（例：「セキュリティ - SQLインジェクション検証が0件。ログイン・検索フォームなど入力箇所全般で悪意ある入力値のテストが必要」）"
+  ],
+  "defectRiskAnalysis": "欠陥混入リスク分析（300文字以内）。どのカテゴリで欠陥が混入しやすいか、その理由と影響を具体的に記述",
+  "improvementSuggestions": [
+    "【改善タイトル】具体的な改善内容。例：「○○画面の□□機能で、入力値が△△の場合に××されることを確認するテストを追加」のように実装可能な粒度で記載"
+  ],
   "heatmap": [
     {
       "category": "カテゴリ名",
       "riskLevel": "critical|high|medium|low",
       "score": 0.0から1.0,
-      "reason": "リスク理由（100文字以内）"
+      "reason": "リスク理由（例：『入力フォームの異常系テストが2件のみ。バリデーション抜けによる不正データ登録リスクが高い』）"
     }
   ],
   "coverageMissingAreas": [
     {
       "area": "不足領域名",
       "severity": "critical|high|medium",
-      "description": "不足内容の説明（150文字以内）",
-      "suggestedTests": ["追加すべきテスト1", "追加すべきテスト2"],
-      "relatedStandard": "関連標準（ISO25010/ISO29119/OWASP/ISTQB）"
+      "description": "不足内容の説明。現在の状態と何が足りないかを具体的に",
+      "suggestedTests": [
+        "具体的なテストケース例（例：「メールアドレス入力欄に256文字以上の文字列を入力し、エラーメッセージが表示されることを確認」）"
+      ],
+      "relatedStandard": "ISO25010|ISO29119|OWASP|ISTQB"
     }
   ]
 }
 
-評価基準:
-- iso25010: 機能性・信頼性・使用性・効率性・保守性・移植性の各品質特性のカバレッジ
-- iso29119: テスト計画・設計・実行・報告の標準手順適合度
-- owasp: OWASP ASVSのセキュリティ検証項目カバレッジ（${designMeta?.systemCharacteristics.includes('セキュリティ重要') ? '特に重視' : '標準評価'}）
-- istqb: 同値分割・境界値分析・デシジョンテーブル・状態遷移などのテスト技法適用率
-- heatmapはカテゴリごとの欠陥リスクを分析（scoreが高いほどリスク大）
-- coverageMissingAreasはシステム特性（${designMeta?.systemCharacteristics.join('、') || '不明'}）と業界特性（${designMeta?.industry || '不明'}）を考慮した不足領域`
+スコア評価基準:
+- iso25010（×0.3）: 機能性・信頼性・使用性・効率性・保守性・移植性の各品質特性のカバレッジ
+- iso29119（×0.3）: テスト計画・設計技法・実行・記録の標準手順適合度
+- owasp（×0.2）: OWASP ASVSのセキュリティ検証項目カバレッジ（${designMeta?.systemCharacteristics.includes('セキュリティ重要') ? '特に重視' : '標準評価'}）
+- istqb（×0.2）: 同値分割・境界値分析・デシジョンテーブル・状態遷移などの技法適用率
+- heatmapはカテゴリごとの欠陥リスク（scoreが高いほどリスク大）
+- coverageMissingAreasはシステム特性（${designMeta?.systemCharacteristics.join('、') || '不明'}）と業界（${designMeta?.industry || '不明'}）を考慮`
 
   const res = await client.chat.completions.create({
     model,
@@ -117,7 +167,7 @@ ${itemsSummary}
       { role: 'user', content: userPrompt },
     ],
     temperature: 0.2,
-    max_tokens: 4000,
+    max_tokens: 5000,
   })
 
   const raw = res.choices[0]?.message?.content ?? '{}'
@@ -125,11 +175,7 @@ ${itemsSummary}
   const parsed = JSON.parse(clean)
 
   const cs = parsed.coverageScore ?? {}
-  const composite =
-    0.3 * (cs.iso25010 ?? 0) +
-    0.3 * (cs.iso29119 ?? 0) +
-    0.2 * (cs.owasp ?? 0) +
-    0.2 * (cs.istqb ?? 0)
+  const composite = 0.3 * (cs.iso25010 ?? 0) + 0.3 * (cs.iso29119 ?? 0) + 0.2 * (cs.owasp ?? 0) + 0.2 * (cs.istqb ?? 0)
 
   return {
     id: uuidv4(),
@@ -146,10 +192,13 @@ ${itemsSummary}
       istqb: cs.istqb ?? 0,
       composite: Math.round(composite * 100) / 100,
     },
+    scoreReason: parsed.scoreReason ?? '',
+    overallSummary: parsed.overallSummary ?? '',
     missingPerspectives: parsed.missingPerspectives ?? [],
     defectRiskAnalysis: parsed.defectRiskAnalysis ?? '',
     improvementSuggestions: parsed.improvementSuggestions ?? [],
     heatmap: parsed.heatmap ?? [],
+    perspectiveHeatmap: calcPerspectiveHeatmap(items),
     coverageMissingAreas: parsed.coverageMissingAreas ?? [],
     designMeta,
   }
@@ -166,19 +215,15 @@ async function runCompareReview(
   const fileSummaries = files.map((f, i) => {
     const perspectives = [...new Set(f.items.map(t => t.testPerspective))]
     const majors = [...new Set(f.items.map(t => t.categoryMajor))]
-    const sample = f.items.slice(0, 80).map(t =>
-      `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`
-    ).join('\n')
+    const sample = f.items.slice(0, 80).map(t => `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`).join('\n')
     return `【ファイル${i + 1}: ${f.filename}】
-件数: ${f.items.length}件
-カテゴリ: ${majors.join('、')}
-観点: ${perspectives.join('、')}
-項目サンプル:
-${sample}`
+件数: ${f.items.length}件 / カテゴリ: ${majors.join('、')} / 観点: ${perspectives.join('、')}
+項目サンプル:\n${sample}`
   }).join('\n\n---\n\n')
 
   const prompt = `以下の${files.length}つのテスト設計ファイルを意味論的に比較分析してください。
 純粋な文字列比較ではなく、テスト意図・カバレッジ・設計思想の差異を抽出してください。
+differenceDetailsのfileA/fileBには、そのファイルの具体的なテスト傾向（例：「AはXXXに注力しているが、YYYが弱い」）を記載。
 
 ${fileSummaries}
 
@@ -189,9 +234,9 @@ JSON形式のみで出力:
   "differenceDetails": [
     {
       "area": "差異が生じている領域",
-      "fileA": "ファイル1の特徴・傾向",
-      "fileB": "ファイル2の特徴・傾向",
-      "description": "差異の意味論的な解説（200文字以内）"
+      "fileA": "ファイル1の具体的な特徴・傾向（例：「正常系中心で100件、異常系は5件のみ」）",
+      "fileB": "ファイル2の具体的な特徴・傾向",
+      "description": "差異の意味論的な解説。どちらが良いかの判断も含める（200文字以内）"
     }
   ],
   "recommendation": "どのファイルの設計が優れているか、または統合推奨（300文字以内）"
@@ -208,24 +253,19 @@ JSON形式のみで出力:
   const clean = raw.replace(/```(?:json)?/gi, '').trim()
   const parsed = JSON.parse(clean)
 
-  // 各ファイルの個別スコアも並行計算（簡易版）
   const fileScores = files.map(f => {
     const p = [...new Set(f.items.map(t => t.testPerspective))]
-    const hasNormal = p.includes('正常系') ? 1 : 0
-    const hasAbnormal = p.includes('異常系') ? 1 : 0
-    const hasSecurity = p.includes('セキュリティ') ? 1 : 0
-    const hasBoundary = p.includes('境界値') ? 1 : 0
-    const hasPerfomance = p.includes('性能') ? 1 : 0
-    const perspectiveScore = (hasNormal + hasAbnormal + hasSecurity + hasBoundary + hasPerfomance) / 5
+    const has = (v: string) => p.includes(v) ? 1 : 0
+    const perspScore = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
     return {
       filename: f.filename,
       itemCount: f.items.length,
       coverageScore: {
-        iso25010: Math.min(perspectiveScore * 0.8 + 0.1, 1),
-        iso29119: Math.min(perspectiveScore * 0.7 + 0.15, 1),
-        owasp: hasSecurity * 0.6 + 0.1,
-        istqb: Math.min(perspectiveScore * 0.75 + 0.1, 1),
-        composite: Math.min(perspectiveScore * 0.75 + 0.12, 1),
+        iso25010: Math.min(perspScore * 0.8 + 0.1, 1),
+        iso29119: Math.min(perspScore * 0.7 + 0.15, 1),
+        owasp: has('セキュリティ') * 0.6 + 0.1,
+        istqb: Math.min(perspScore * 0.75 + 0.1, 1),
+        composite: Math.min(perspScore * 0.75 + 0.12, 1),
       } as CoverageScore,
       uniquePerspectives: p,
     }
@@ -240,42 +280,28 @@ JSON形式のみで出力:
   }
 }
 
-// ─── テスト項目をXLSXデータから変換 ─────────────────────────────
+// テスト項目をXLSXデータから変換
 function parseExcelItems(rows: string[][]): TestItem[] {
   if (rows.length < 2) return []
   const header = rows[0]
   const idxOf = (name: string) => header.findIndex(h => h && h.includes(name))
-
-  const idIdx      = idxOf('テストID')
-  const majorIdx   = idxOf('大分類')
-  const minorIdx   = idxOf('中分類')
-  const perspIdx   = idxOf('テスト観点')
-  const titleIdx   = idxOf('テスト項目名')
-  const preIdx     = idxOf('事前条件')
-  const stepsIdx   = idxOf('テスト手順')
-  const expIdx     = idxOf('期待結果')
-  const prioIdx    = idxOf('優先度')
-  const autoIdx    = idxOf('自動化可否')
+  const idIdx = idxOf('テストID'); const majorIdx = idxOf('大分類'); const minorIdx = idxOf('中分類')
+  const perspIdx = idxOf('テスト観点'); const titleIdx = idxOf('テスト項目名'); const preIdx = idxOf('事前条件')
+  const stepsIdx = idxOf('テスト手順'); const expIdx = idxOf('期待結果'); const prioIdx = idxOf('優先度'); const autoIdx = idxOf('自動化可否')
 
   return rows.slice(1).filter(r => r.some(c => c?.trim())).map((row, i) => ({
-    id: uuidv4(),
-    projectId: '',
+    id: uuidv4(), projectId: '',
     testId: row[idIdx] || `TC-${String(i + 1).padStart(3, '0')}`,
-    categoryMajor: row[majorIdx] || '未分類',
-    categoryMinor: row[minorIdx] || '正常系',
+    categoryMajor: row[majorIdx] || '未分類', categoryMinor: row[minorIdx] || '正常系',
     testPerspective: (row[perspIdx] || '機能テスト') as TestItem['testPerspective'],
-    testTitle: row[titleIdx] || '',
-    precondition: row[preIdx] || '',
-    steps: row[stepsIdx] ? [row[stepsIdx]] : [],
-    expectedResult: row[expIdx] || '',
+    testTitle: row[titleIdx] || '', precondition: row[preIdx] || '',
+    steps: row[stepsIdx] ? [row[stepsIdx]] : [], expectedResult: row[expIdx] || '',
     priority: (row[prioIdx] === '高' ? 'HIGH' : row[prioIdx] === '低' ? 'LOW' : 'MEDIUM') as TestItem['priority'],
     automatable: (row[autoIdx] === '自動化可' ? 'YES' : row[autoIdx] === '手動のみ' ? 'NO' : 'CONSIDER') as TestItem['automatable'],
-    orderIndex: i,
-    isDeleted: false,
+    orderIndex: i, isDeleted: false,
   }))
 }
 
-// ─── APIハンドラ ──────────────────────────────────────────────
 export async function POST(req: Request) {
   try {
     const formData = await req.formData()
@@ -287,7 +313,6 @@ export async function POST(req: Request) {
     const designMeta: DesignMeta | undefined = designMetaRaw ? JSON.parse(designMetaRaw) : undefined
 
     if (action === 'review_generated') {
-      // 生成済みテスト項目をレビュー
       const itemsRaw = formData.get('items') as string
       const items: TestItem[] = JSON.parse(itemsRaw)
       const result = await runSingleReview(items, designMeta, reviewModelId, reviewModelLabel, projectId)
@@ -295,7 +320,6 @@ export async function POST(req: Request) {
     }
 
     if (action === 'review_excel') {
-      // アップロードされたExcelをレビュー
       const XLSX = await import('xlsx')
       const file = formData.get('file') as File
       if (!file) return NextResponse.json({ error: 'ファイルが必要です' }, { status: 400 })
@@ -310,7 +334,6 @@ export async function POST(req: Request) {
     }
 
     if (action === 'compare_excel') {
-      // 複数ExcelファイルをAI比較
       const XLSX = await import('xlsx')
       const fileList: Array<{ filename: string; items: TestItem[] }> = []
       let i = 0
