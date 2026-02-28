@@ -210,7 +210,7 @@ export function parseTestItems(
             filename: meta.filename,
             category: meta.category,
             excerpt: meta.excerpt + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
-            pageUrl: meta.pageUrl,
+            pageUrl: meta.pageUrl ?? undefined,
           })
         } else {
           // REF番号が見つからない場合でも理由を保持
