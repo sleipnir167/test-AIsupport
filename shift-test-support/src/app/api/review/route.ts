@@ -255,7 +255,7 @@ JSON形式のみで出力:
 
   const fileScores = files.map(f => {
     const p = [...new Set(f.items.map(t => t.testPerspective))]
-    const has = (v: string) => p.includes(v) ? 1 : 0
+    const has = (v: string) => (p as string[]).includes(v) ? 1 : 0
     const perspScore = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
     return {
       filename: f.filename,
