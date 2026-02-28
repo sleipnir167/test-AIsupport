@@ -20,7 +20,7 @@ export interface RefMapEntry {
   filename: string
   category: string
   excerpt: string
-  pageUrl?: string
+  pageUrl?: string | null
 }
 
 export interface BuildPromptsResult {
