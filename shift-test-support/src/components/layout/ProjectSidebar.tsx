@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   FolderOpen, FileText, Globe, Code2, Sparkles, ClipboardList,
-  Download, ChevronLeft, LayoutDashboard
+  Download, ChevronLeft, LayoutDashboard, ShieldCheck
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -24,6 +24,7 @@ export default function ProjectSidebar({ projectId, projectName }: SidebarProps)
     { href: `${base}/generate`, label: 'AIテスト生成', icon: Sparkles },
     { href: `${base}/test-items`, label: 'テスト項目書', icon: ClipboardList },
     { href: `${base}/export`, label: 'Excel出力', icon: Download },
+    { href: `${base}/review`, label: 'AIレビュー・評価', icon: ShieldCheck },
   ]
 
   return (
@@ -65,7 +66,7 @@ export default function ProjectSidebar({ projectId, projectName }: SidebarProps)
       <div className="p-3 border-t border-gray-100">
         <div className="bg-shift-50 rounded-lg p-3">
           <p className="text-xs font-semibold text-shift-800 mb-1">ヘルプ</p>
-          <p className="text-xs text-shift-600">ご不明な点はMOKSサポートまでお問い合わせください。</p>
+          <p className="text-xs text-shift-600">ご不明な点はShiftサポートまでお問い合わせください。</p>
         </div>
       </div>
     </aside>

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import {
   Sparkles, CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
-  LayoutGrid, List, Bug, Copy, CheckCheck, AlertTriangle, Zap
+  LayoutGrid, List, Bug, Copy, CheckCheck, AlertTriangle, Zap, ShieldCheck
 } from 'lucide-react'
 import type { SiteAnalysis, PageInfo } from '@/types'
 
@@ -164,6 +164,12 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showDebug, setShowDebug] = useState(false)
+  const [showDesignMeta, setShowDesignMeta] = useState(false)
+
+  // テスト設計メタ情報
+  const [industry, setIndustry] = useState<string>('SaaS')
+  const [systemCharacteristics, setSystemCharacteristics] = useState<Set<string>>(new Set())
+  const [designApproaches, setDesignApproaches] = useState<Set<string>>(new Set(['リスクベースドテスト']))
 
   // モデル選択
   const [selectedModelId, setSelectedModelId] = useState(MODEL_OPTIONS.find(m => m.isDefault)!.id)
@@ -228,6 +234,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setJobDebug(job)
     setDone(true)
     setGenerating(false)
+    // テスト設計メタ情報をlocalStorageに保存（レビュータブで参照）
+    const meta = {
+      industry,
+      systemCharacteristics: Array.from(systemCharacteristics),
+      designApproaches: Array.from(designApproaches),
+      modelId: getModelId(),
+      modelLabel: useCustomModel ? customModel : (MODEL_OPTIONS.find(m => m.id === selectedModelId)?.label ?? selectedModelId),
+      generatedAt: new Date().toISOString(),
+      maxItems,
+      batchSize: batchSizePerCall,
+      ragTopK: { doc: ragTopKDoc, site: ragTopKSite, src: ragTopKSrc },
+      perspectives: Array.from(selectedPerspectives),
+    }
+    try { localStorage.setItem(`designMeta_${params.id}`, JSON.stringify(meta)) } catch {}
   }
 
   const finishError = (msg: string, job?: JobDebug) => {
@@ -608,6 +628,82 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           )}
         </div>
       )}
+
+      {/* テスト設計ポリシー設定 */}
+      <div className="card">
+        <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+          onClick={() => setShowDesignMeta(!showDesignMeta)}>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-shift-600" />
+            <span className="font-semibold text-gray-900 text-sm">テスト設計ポリシー</span>
+            <span className="text-xs text-gray-400">（業界・特性・アプローチ）</span>
+            {(systemCharacteristics.size > 0 || designApproaches.size > 0) && (
+              <span className="text-xs bg-shift-100 text-shift-700 px-1.5 py-0.5 rounded-full">設定済</span>
+            )}
+          </div>
+          {showDesignMeta ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </button>
+        {showDesignMeta && (
+          <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
+            <p className="text-xs text-gray-400">ここで設定した情報は生成後にレビュータブで活用され、業界特性に応じた品質評価を行います。</p>
+
+            {/* 対象業界 */}
+            <div>
+              <label className="label">対象業界</label>
+              <div className="flex flex-wrap gap-2">
+                {(['金融', '医療', 'EC', 'SaaS', '製造', '公共', 'その他'] as const).map(v => (
+                  <button key={v} onClick={() => setIndustry(v)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${industry === v
+                      ? 'bg-shift-800 text-white border-shift-800'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* システム特性 */}
+            <div>
+              <label className="label">システム特性（複数可）</label>
+              <div className="flex flex-wrap gap-2">
+                {(['セキュリティ重要', '高可用性要求', '並行処理あり', 'リアルタイム処理', '大規模データ', '外部連携多数'] as const).map(v => {
+                  const active = systemCharacteristics.has(v)
+                  return (
+                    <button key={v} onClick={() => setSystemCharacteristics(prev => {
+                      const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
+                    })}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active
+                        ? 'bg-red-100 text-red-800 border-red-300'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-red-300'}`}>
+                      {active ? '✓ ' : ''}{v}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* テスト設計アプローチ */}
+            <div>
+              <label className="label">テスト設計アプローチ（複数可）</label>
+              <div className="flex flex-wrap gap-2">
+                {(['リスクベースドテスト', 'セキュリティ重点設計', '境界値分析中心', '状態遷移重視', 'ユーザビリティ重点', '性能重点'] as const).map(v => {
+                  const active = designApproaches.has(v)
+                  return (
+                    <button key={v} onClick={() => setDesignApproaches(prev => {
+                      const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
+                    })}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active
+                        ? 'bg-blue-100 text-blue-800 border-blue-300'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                      {active ? '✓ ' : ''}{v}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* 詳細設定 */}
       <div className="card">
