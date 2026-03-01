@@ -273,6 +273,23 @@ export interface AdminSettings {
   labelGenerateButton: string      // テスト生成ボタン文言
   labelReviewButton: string        // レビューボタン文言
   siteTitle: string                // アプリのサイトタイトル
+
+  // ─── モデルリスト管理 ─────────────────────────────────────────
+  customModelList: CustomModelEntry[]  // 管理者が追加・編集できるモデル一覧
+
+  // ─── バッチサイズ初期値 ───────────────────────────────────────
+  defaultBatchSize: number         // テスト生成画面のバッチサイズ初期値
+}
+
+// ─── カスタムモデルエントリ ─────────────────────────────────────
+export interface CustomModelEntry {
+  id: string          // OpenRouter モデルID (例: google/gemini-2.5-flash)
+  label: string       // 表示名
+  inputCost: string   // 入力コスト表示 (例: $0.15)
+  outputCost: string  // 出力コスト表示 (例: $0.60)
+  feature: string     // 特徴説明
+  speed: '爆速' | '高速' | '標準'
+  isFree?: boolean
 }
 
 // ─── テストプラン（プランニング結果） ───────────────────────────

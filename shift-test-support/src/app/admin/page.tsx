@@ -8,7 +8,7 @@ import {
   Plus, Trash2, RefreshCw
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import type { AdminSettings, PromptTemplate } from '@/types'
+import type { AdminSettings, PromptTemplate, CustomModelEntry } from '@/types'
 
 // ─── デフォルト値 ──────────────────────────────────────────────
 const DEFAULT_SETTINGS: AdminSettings = {
@@ -28,6 +28,8 @@ const DEFAULT_SETTINGS: AdminSettings = {
   labelGenerateButton:   'AIテスト項目を生成する',
   labelReviewButton:     'AIレビューを実行',
   siteTitle:             'AI テスト支援システム',
+  customModelList:       [],
+  defaultBatchSize:      50,
 }
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
@@ -56,7 +58,7 @@ const MODEL_LIMITS = [
 ]
 
 // ─── タブ型 ────────────────────────────────────────────────────
-type TabType = 'settings' | 'models' | 'display' | 'labels' | 'prompts'
+type TabType = 'settings' | 'models' | 'modellist' | 'display' | 'labels' | 'prompts'
 
 // ─── ModelPickerコンポーネント ─────────────────────────────────
 function ModelPicker({
@@ -151,6 +153,205 @@ function LabelEditor({
         placeholder={placeholder}
         className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-gray-200 outline-none focus:border-shift-600 transition-colors"
       />
+    </div>
+  )
+}
+
+// ─── ModelListEditor ───────────────────────────────────────────
+const SPEED_OPTIONS: CustomModelEntry['speed'][] = ['爆速', '高速', '標準']
+
+function ModelListEditor({
+  models, onChange, onSave, saving
+}: {
+  models: CustomModelEntry[]
+  onChange: (list: CustomModelEntry[]) => void
+  onSave: () => void
+  saving: boolean
+}) {
+  const [editIdx, setEditIdx] = useState<number | null>(null)
+  const [editBuf, setEditBuf] = useState<CustomModelEntry>({
+    id: '', label: '', inputCost: '', outputCost: '', feature: '', speed: '高速'
+  })
+
+  const startEdit = (idx: number) => {
+    setEditIdx(idx)
+    setEditBuf({ ...models[idx] })
+  }
+  const startAdd = () => {
+    setEditIdx(-1)
+    setEditBuf({ id: '', label: '', inputCost: '', outputCost: '', feature: '', speed: '高速' })
+  }
+  const cancelEdit = () => setEditIdx(null)
+  const commitEdit = () => {
+    if (!editBuf.id.trim()) return
+    if (editIdx === -1) {
+      onChange([...models, { ...editBuf }])
+    } else if (editIdx !== null) {
+      onChange(models.map((m, i) => i === editIdx ? { ...editBuf } : m))
+    }
+    setEditIdx(null)
+  }
+  const removeModel = (idx: number) => onChange(models.filter((_, i) => i !== idx))
+  const moveUp = (idx: number) => {
+    if (idx === 0) return
+    const arr = [...models]
+    ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+    onChange(arr)
+  }
+  const moveDown = (idx: number) => {
+    if (idx === models.length - 1) return
+    const arr = [...models]
+    ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
+    onChange(arr)
+  }
+
+  const EditRow = () => (
+    <div className="border-2 border-dashed border-shift-600 rounded-xl p-4 space-y-3 bg-shift-900/20">
+      <p className="text-xs font-semibold text-shift-300">{editIdx === -1 ? '新しいモデルを追加' : 'モデルを編集'}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">モデルID（OpenRouter形式）</label>
+          <input value={editBuf.id} onChange={e => setEditBuf(b => ({ ...b, id: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono outline-none focus:border-shift-600"
+            placeholder="例: google/gemini-2.5-pro" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">表示名</label>
+          <input value={editBuf.label} onChange={e => setEditBuf(b => ({ ...b, label: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:border-shift-600"
+            placeholder="例: Gemini 2.5 Pro" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">入力コスト（表示用）</label>
+          <input value={editBuf.inputCost} onChange={e => setEditBuf(b => ({ ...b, inputCost: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono outline-none focus:border-shift-600"
+            placeholder="例: $0.15" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">出力コスト（表示用）</label>
+          <input value={editBuf.outputCost} onChange={e => setEditBuf(b => ({ ...b, outputCost: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono outline-none focus:border-shift-600"
+            placeholder="例: $0.60" />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs text-gray-400 mb-1 block">特徴説明</label>
+          <input value={editBuf.feature} onChange={e => setEditBuf(b => ({ ...b, feature: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:border-shift-600"
+            placeholder="例: 高精度かつコスパ良好" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">速度</label>
+          <select value={editBuf.speed} onChange={e => setEditBuf(b => ({ ...b, speed: e.target.value as CustomModelEntry['speed'] }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none">
+            {SPEED_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div className="flex items-end">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!editBuf.isFree} onChange={e => setEditBuf(b => ({ ...b, isFree: e.target.checked }))}
+              className="accent-shift-500 w-4 h-4" />
+            <span className="text-xs text-gray-300">無料モデル（緑色強調）</span>
+          </label>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={commitEdit} disabled={!editBuf.id.trim() || !editBuf.label.trim()}
+          className="flex items-center gap-1.5 px-4 py-2 bg-shift-700 hover:bg-shift-600 text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-40">
+          <Save className="w-3.5 h-3.5" />{editIdx === -1 ? '追加' : '保存'}
+        </button>
+        <button onClick={cancelEdit}
+          className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-semibold transition-colors">
+          キャンセル
+        </button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl px-4 py-3 text-blue-300 text-sm flex items-start gap-2">
+        <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="font-semibold">モデル一覧管理</p>
+          <p className="text-xs text-blue-400/80 mt-0.5">
+            テスト生成・レビュー画面のモデル選択肢を管理します。ここで追加したモデルが画面に反映されます。
+            モデルIDは <a href="https://openrouter.ai/models" target="_blank" rel="noopener" className="underline">OpenRouter</a> で確認できます。
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+          <h2 className="font-bold text-white flex items-center gap-2">
+            <Settings className="w-4 h-4 text-shift-400" />モデル一覧（{models.length}件）
+          </h2>
+          <button onClick={startAdd} disabled={editIdx !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-shift-800 hover:bg-shift-700 text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-40">
+            <Plus className="w-3.5 h-3.5" />モデルを追加
+          </button>
+        </div>
+
+        <div className="divide-y divide-gray-800">
+          {models.length === 0 && editIdx !== -1 && (
+            <p className="text-center text-gray-500 text-sm py-8">
+              モデルがありません。「モデルを追加」から登録してください。
+            </p>
+          )}
+          {editIdx === -1 && <div className="p-4"><EditRow /></div>}
+          {models.map((m, idx) => (
+            <div key={idx}>
+              {editIdx === idx ? (
+                <div className="p-4"><EditRow /></div>
+              ) : (
+                <div className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors">
+                  <div className="flex flex-col gap-0.5">
+                    <button onClick={() => moveUp(idx)} disabled={idx === 0}
+                      className="text-gray-600 hover:text-gray-300 disabled:opacity-20 leading-none">▲</button>
+                    <button onClick={() => moveDown(idx)} disabled={idx === models.length - 1}
+                      className="text-gray-600 hover:text-gray-300 disabled:opacity-20 leading-none">▼</button>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-200 text-sm">{m.label}</span>
+                      <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium',
+                        m.speed === '爆速' ? 'bg-green-900/50 text-green-300' :
+                        m.speed === '高速' ? 'bg-blue-900/50 text-blue-300' : 'bg-gray-700 text-gray-300'
+                      )}>{m.speed === '爆速' ? '⚡ ' : ''}{m.speed}</span>
+                      {m.isFree && <span className="text-xs bg-emerald-900/50 text-emerald-300 px-2 py-0.5 rounded-full font-medium">FREE</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 font-mono mt-0.5">{m.id}</div>
+                    {m.feature && <div className="text-xs text-gray-400 mt-0.5 truncate">{m.feature}</div>}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-xs text-gray-400">
+                      <span className={m.isFree ? 'text-emerald-400 font-bold' : ''}>{m.inputCost}</span>
+                      {' / '}
+                      <span className={m.isFree ? 'text-emerald-400 font-bold' : ''}>{m.outputCost}</span>
+                    </div>
+                    <div className="text-xs text-gray-600">入力 / 出力 per 1M tokens</div>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button onClick={() => startEdit(idx)} disabled={editIdx !== null}
+                      className="text-gray-400 hover:text-shift-400 p-1.5 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-30">
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => removeModel(idx)} disabled={editIdx !== null}
+                      className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-900/20 transition-colors disabled:opacity-30">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button onClick={onSave} disabled={saving || editIdx !== null}
+        className="flex items-center gap-2 px-6 py-3 bg-shift-800 hover:bg-shift-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50">
+        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        {saving ? '保存中...' : 'モデル一覧を保存'}
+      </button>
     </div>
   )
 }
@@ -281,11 +482,12 @@ export default function AdminPage() {
 
   // ─── 管理画面本体 ──────────────────────────────────────────
   const TABS: { id: TabType; label: string; icon: typeof Sliders }[] = [
-    { id: 'settings', label: 'AI実行設定',         icon: Sliders },
-    { id: 'models',   label: 'モデル初期値',        icon: Settings },
-    { id: 'display',  label: '表示制御',            icon: Monitor },
-    { id: 'labels',   label: 'UI文言',              icon: Type },
-    { id: 'prompts',  label: 'プロンプトテンプレート', icon: FileText },
+    { id: 'settings',   label: 'AI実行設定',         icon: Sliders },
+    { id: 'models',     label: 'モデル初期値',        icon: Settings },
+    { id: 'modellist',  label: 'モデル一覧管理',      icon: Plus },
+    { id: 'display',    label: '表示制御',            icon: Monitor },
+    { id: 'labels',     label: 'UI文言',              icon: Type },
+    { id: 'prompts',    label: 'プロンプトテンプレート', icon: FileText },
   ]
 
   return (
@@ -439,6 +641,35 @@ export default function AdminPage() {
               </div>
             </div>
 
+            {/* バッチサイズ初期値 */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <h2 className="font-bold text-white mb-4 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-blue-400" />バッチサイズ初期値
+              </h2>
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">1回のAI呼び出しで生成する件数（バッチサイズ）の初期値</label>
+                <div className="flex gap-2 items-center flex-wrap">
+                  {[25, 50, 75, 100].map(v => (
+                    <button key={v} onClick={() => setSettings(s => ({ ...s, defaultBatchSize: v }))}
+                      className={clsx('px-3 py-1.5 rounded-lg text-sm font-medium border transition-all',
+                        settings.defaultBatchSize === v
+                          ? 'bg-shift-700 text-white border-shift-700'
+                          : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500')}>
+                      {v}件
+                    </button>
+                  ))}
+                  <input type="number" min={10} max={200}
+                    value={settings.defaultBatchSize ?? 50}
+                    onChange={e => setSettings(s => ({ ...s, defaultBatchSize: parseInt(e.target.value) || 50 }))}
+                    className="w-28 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  ユーザーのテスト生成画面で初期表示される値です。ユーザーは画面から変更できます。
+                  ⚠️ 爆速モデルは100件も可。DeepSeekは50件以下推奨（Vercel 60秒制限）
+                </p>
+              </div>
+            </div>
+
             <button onClick={saveSettings} disabled={saving}
               className="flex items-center gap-2 px-6 py-3 bg-shift-800 hover:bg-shift-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -490,6 +721,16 @@ export default function AdminPage() {
               {saving ? '保存中...' : 'モデル初期値を保存'}
             </button>
           </div>
+        )}
+
+        {/* ━━━━━━━━━━━━━━━━━ モデル一覧管理 ━━━━━━━━━━━━━━━━━ */}
+        {activeTab === 'modellist' && (
+          <ModelListEditor
+            models={settings.customModelList ?? []}
+            onChange={list => setSettings(s => ({ ...s, customModelList: list }))}
+            onSave={saveSettings}
+            saving={saving}
+          />
         )}
 
         {/* ━━━━━━━━━━━━━━━━━ 表示制御 ━━━━━━━━━━━━━━━━━ */}

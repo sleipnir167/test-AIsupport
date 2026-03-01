@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
   ClipboardList, Play, Edit3, Trash2, Plus, ChevronRight, RotateCcw, AlertTriangle, X, Save
 } from 'lucide-react'
-import type { SiteAnalysis, TestPlan, TestPlanBatch } from '@/types'
+import type { SiteAnalysis, TestPlan, TestPlanBatch, CustomModelEntry } from '@/types'
 import { TEST_PHASE_DESCRIPTIONS, TEST_PHASE_PERSPECTIVES } from '@/types'
 import type { TestPhase } from '@/types'
 
@@ -17,12 +17,9 @@ const TEST_PHASES: TestPhase[] = [
 const ALL_PERSPECTIVES = ['機能テスト','正常系','異常系','境界値','セキュリティ','操作性','性能']
 const PERSPECTIVE_OPTIONS = ALL_PERSPECTIVES.map(v => ({ label: v, value: v }))
 
-interface ModelOption {
-  id: string; label: string; inputCost: string; outputCost: string
-  feature: string; speed: '爆速'|'高速'|'標準'; isDefault?: boolean; isFree?: boolean
-}
-const MODEL_OPTIONS: ModelOption[] = [
-  { id:'deepseek/deepseek-v3.2',           label:'DeepSeek V3.2',          inputCost:'$0.20', outputCost:'$0.35',  feature:'最安クラス。出力量が多いならこれ一択',  speed:'高速', isDefault:true },
+// モデル一覧は管理者設定から動的に取得する。フォールバック用デフォルト値。
+const DEFAULT_MODEL_OPTIONS: CustomModelEntry[] = [
+  { id:'deepseek/deepseek-v3.2',           label:'DeepSeek V3.2',          inputCost:'$0.20', outputCost:'$0.35',  feature:'最安クラス。出力量が多いならこれ一択',  speed:'高速' },
   { id:'google/gemini-2.5-flash',          label:'Gemini 2.5 Flash',        inputCost:'$0.15', outputCost:'$0.60',  feature:'最新Gemini。高精度かつ爆速',          speed:'爆速' },
   { id:'google/gemini-3-flash-preview',    label:'Gemini 3 Flash Preview',  inputCost:'$0.10', outputCost:'$0.40',  feature:'Gemini最新プレビュー。爆速で大量生成', speed:'爆速' },
   { id:'openai/gpt-5-nano',               label:'GPT-5 Nano',              inputCost:'$0.05', outputCost:'$0.20',  feature:'最も安価なGPT。軽量タスクに最適',     speed:'爆速' },
@@ -33,9 +30,10 @@ const MODEL_OPTIONS: ModelOption[] = [
 ]
 const SPEED_COLOR: Record<string,string> = { '爆速':'text-green-600 bg-green-50', '高速':'text-blue-600 bg-blue-50', '標準':'text-gray-600 bg-gray-100' }
 
-function ModelSelector({ selectedId, customModel, useCustom, onSelect, onCustomChange, onUseCustom, label }: {
+function ModelSelector({ selectedId, customModel, useCustom, onSelect, onCustomChange, onUseCustom, label, models }: {
   selectedId:string; customModel:string; useCustom:boolean
   onSelect:(id:string)=>void; onCustomChange:(v:string)=>void; onUseCustom:()=>void; label:string
+  models: CustomModelEntry[]
 }) {
   return (
     <div className="card">
@@ -54,7 +52,7 @@ function ModelSelector({ selectedId, customModel, useCustom, onSelect, onCustomC
             <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
           </tr></thead>
           <tbody className="divide-y divide-gray-50">
-            {MODEL_OPTIONS.map(m => (
+            {models.map(m => (
               <tr key={m.id} onClick={()=>onSelect(m.id)}
                 className={`cursor-pointer transition-colors ${!useCustom&&selectedId===m.id?'bg-shift-50 border-l-2 border-l-shift-700':'hover:bg-gray-50 border-l-2 border-l-transparent'}`}>
                 <td className="px-3 py-2.5 text-center"><input type="radio" checked={!useCustom&&selectedId===m.id} onChange={()=>onSelect(m.id)} className="accent-shift-700"/></td>
@@ -243,6 +241,10 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [execCustomModel, setExecCustomModel] = useState('')
   const [useExecCustom, setUseExecCustom] = useState(false)
   const [execRagTopK, setExecRagTopK] = useState({doc:100,site:40,src:100})
+  // 管理者設定から取得したモデル一覧
+  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(DEFAULT_MODEL_OPTIONS)
+  // バッチごとのabort警告メッセージ
+  const [abortWarnings, setAbortWarnings] = useState<string[]>([])
 
   const [plan, setPlan] = useState<TestPlan|null>(null)
   const [showPlanEditor, setShowPlanEditor] = useState(false)
@@ -272,9 +274,15 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     // AdminSettings からデフォルトモデルを取得
     fetch('/api/admin/public-settings').then(r=>r.json()).then((s:{
       defaultPlanModelId?:string; defaultExecModelId?:string; labelGenerateButton?:string
+      customModelList?: CustomModelEntry[]; defaultBatchSize?: number
     })=>{
-      if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!MODEL_OPTIONS.find(m=>m.id===s.defaultPlanModelId)) }
-      if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!MODEL_OPTIONS.find(m=>m.id===s.defaultExecModelId)) }
+      // モデルリストを管理者設定から上書き（空なら DEFAULT_MODEL_OPTIONS を維持）
+      if(s.customModelList && s.customModelList.length > 0) setAdminModelList(s.customModelList)
+      // バッチサイズ初期値を適用
+      if(s.defaultBatchSize) setBatchSize(s.defaultBatchSize)
+      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : DEFAULT_MODEL_OPTIONS
+      if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!modelList.find(m=>m.id===s.defaultPlanModelId)) }
+      if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!modelList.find(m=>m.id===s.defaultExecModelId)) }
     }).catch(()=>{})
   },[params.id])
 
@@ -312,7 +320,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   const runExecution=async()=>{
     if(!plan)return
-    setExecuting(true);setExecError('');setExecDone(false);setTotalGenerated(0);setCurrentBatch(0);setIsPartial(false)
+    setExecuting(true);setExecError('');setExecDone(false);setTotalGenerated(0);setCurrentBatch(0);setIsPartial(false);setAbortWarnings([])
     try {
       const startRes=await fetch('/api/generate/start',{
         method:'POST',headers:{'Content-Type':'application/json'},
@@ -321,17 +329,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       const startData=await startRes.json()
       if(!startData.jobId)throw new Error(startData.error||'ジョブ開始に失敗しました')
       const batches=plan.batches;setTotalBatches(batches.length)
-      let generated=0;let aborted=false
+      let generated=0;let aborted=false;let globalRefOffset=0
       for(let i=0;i<batches.length;i++){
         const batch=batches[i];setCurrentBatch(i+1);setCurrentBatchLabel(`${batch.category} / ${batch.perspective}`)
         const batchRes=await fetch('/api/generate/batch',{
           method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({jobId:startData.jobId,projectId:params.id,batchNum:i+1,totalBatches:batches.length,alreadyCount:generated,planBatch:batch,modelOverride:getExecModel(),ragTopK:execRagTopK}),
+          body:JSON.stringify({
+            jobId:startData.jobId,projectId:params.id,batchNum:i+1,totalBatches:batches.length,
+            alreadyCount:generated,planBatch:batch,modelOverride:getExecModel(),
+            ragTopK:execRagTopK,
+            refOffset:globalRefOffset, // ★ グローバルREF番号オフセット（バッチをまたいで一意）
+          }),
         })
         const batchData=await batchRes.json()
         if(!batchRes.ok||batchData.error)throw new Error(`バッチ${i+1}でエラー: ${batchData.error}`)
-        generated+=batchData.count??0;setTotalGenerated(generated)
-        if(batchData.aborted){aborted=true;break}
+        const batchCount = batchData.count??0
+        generated+=batchCount;setTotalGenerated(generated)
+        // REF番号オフセットを加算（次バッチのREF番号が前バッチと重複しないよう）
+        globalRefOffset += batchCount
+        if(batchData.aborted){
+          aborted=true
+          if(batchData.abortedWarning){
+            setAbortWarnings(prev=>[...prev, batchData.abortedWarning])
+          }
+          break
+        }
       }
       await fetch('/api/generate/complete',{
         method:'POST',headers:{'Content-Type':'application/json'},
@@ -423,7 +445,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <ModelSelector label="① プランニング用AIモデル（テスト設計方針の立案）"
             selectedId={planModelId} customModel={planCustomModel} useCustom={usePlanCustom}
             onSelect={id=>{setPlanModelId(id);setUsePlanCustom(false)}}
-            onCustomChange={setPlanCustomModel} onUseCustom={()=>setUsePlanCustom(true)}/>
+            onCustomChange={setPlanCustomModel} onUseCustom={()=>setUsePlanCustom(true)}
+            models={adminModelList}/>
 
           <div className="card">
             <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors" onClick={()=>setShowAdvanced(!showAdvanced)}>
@@ -573,7 +596,8 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           <ModelSelector label="② 実行用AIモデル（テスト項目詳細の生成）"
             selectedId={execModelId} customModel={execCustomModel} useCustom={useExecCustom}
             onSelect={id=>{setExecModelId(id);setUseExecCustom(false)}}
-            onCustomChange={setExecCustomModel} onUseCustom={()=>setUseExecCustom(true)}/>
+            onCustomChange={setExecCustomModel} onUseCustom={()=>setUseExecCustom(true)}
+            models={adminModelList}/>
 
           <div className="card p-4">
             <p className="text-xs font-semibold text-gray-500 mb-3">RAG取得チャンク数（実行用）</p>
@@ -623,8 +647,22 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
               </div>
               <h3 className="text-lg font-bold text-gray-900 mb-1">{isPartial?'途中保存で完了':'生成完了！'}</h3>
               <p className="text-sm text-gray-600 mb-4">{totalGenerated}件のテスト項目を生成しました</p>
+              {isPartial&&abortWarnings.length>0&&(
+                <div className="mb-4 text-left space-y-2">
+                  <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5"/>途中中断したバッチの詳細
+                  </p>
+                  {abortWarnings.map((w,i)=>(
+                    <div key={i} className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{w}</div>
+                  ))}
+                  <p className="text-xs text-gray-500 mt-1">
+                    ※ タイムアウト（52秒）により途中で中断されました。生成済みの項目は保存されています。
+                    再実行するか、テスト項目書を確認して不足分を手動で追加してください。
+                  </p>
+                </div>
+              )}
               <div className="flex gap-3 justify-center">
-                <button className="btn-secondary" onClick={()=>{setExecDone(false);setTotalGenerated(0);setCurrentBatch(0)}}>再実行</button>
+                <button className="btn-secondary" onClick={()=>{setExecDone(false);setTotalGenerated(0);setCurrentBatch(0);setAbortWarnings([])}}>再実行</button>
                 <button className="btn-primary" onClick={()=>router.push(`/projects/${params.id}/test-items`)}>テスト項目書を確認</button>
               </div>
             </div>

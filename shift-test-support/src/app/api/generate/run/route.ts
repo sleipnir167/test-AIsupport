@@ -1,3 +1,13 @@
+/**
+ * POST /api/generate/run
+ *
+ * ⚠️ DEPRECATED: このルートは旧来の直接生成フローです。
+ * 現在は /api/generate/plan → /api/generate/batch の2ステップフローを使用してください。
+ * このルートは後方互換のために残していますが、RAGのtopKが非常に少ない（doc:12,site:8,src:6）など
+ * 品質面で劣ります。新機能の開発はしないでください。
+ *
+ * フロントエンドはすべて /api/generate/plan + /api/generate/batch に移行済みです。
+ */
 import { NextResponse } from 'next/server'
 import {
   getProject, updateProject,
@@ -9,7 +19,6 @@ import { buildPrompts, parseTestItems } from '@/lib/ai'
 import OpenAI from 'openai'
 import type { PageInfo } from '@/types'
 
-// このルートが実際のAI処理を担う。Proプランなら300秒に延ばせる。
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +39,7 @@ function createAIClient(): { client: OpenAI; model: string } {
         'X-Title': 'MSOK AI Test Support',
       },
     }),
+    // ★ DEPRECATED: 旧来モデル設定。新フロー(/api/generate/batch)では modelOverride が使われる
     model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
   }
 }
@@ -49,10 +59,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'プロジェクトが見つかりません' }, { status: 404 })
   }
 
-  try {
-    // Step 1
-    await updateJob(jobId, { status: 'running', stage: 0, message: 'RAG検索中...' })
+  // ⚠️ DEPRECATED WARNING LOG
+  console.warn(
+    `[DEPRECATED] /api/generate/run called for project=${projectId}. ` +
+    `Migrate to /api/generate/plan + /api/generate/batch for better quality.`
+  )
 
+  try {
+    await updateJob(jobId, { status: 'running', stage: 0, message: 'RAG検索中... (旧フロー)' })
+
+    // ★ NOTE: topKが少ないのはレガシー実装のため。新フローでは doc:100, site:40, src:100 を使用。
     const baseQuery = `${project.targetSystem} テスト項目 機能 要件 画面 操作 入力 エラー`
     const pageQuery = targetPages?.length
       ? `${baseQuery} ${targetPages.map(p => p.title).join(' ')}`
@@ -72,10 +88,9 @@ export async function POST(req: Request) {
       return true
     })
 
-    // Step 2
     await updateJob(jobId, {
       stage: 1,
-      message: `プロンプト構築中 (Doc:${docChunks.length} Site:${siteChunks.length} Code:${sourceChunks.length})`,
+      message: `プロンプト構築中 (Doc:${docChunks.length} Site:${siteChunks.length} Code:${sourceChunks.length}) [旧フロー]`,
     })
 
     const { systemPrompt, userPrompt } = buildPrompts(
@@ -83,8 +98,7 @@ export async function POST(req: Request) {
       { maxItems, perspectives, targetPages }
     )
 
-    // Step 3
-    await updateJob(jobId, { stage: 2, message: 'AI生成中...' })
+    await updateJob(jobId, { stage: 2, message: 'AI生成中... [旧フロー]' })
 
     const { client, model } = createAIClient()
     const aiStream = await client.chat.completions.create({
@@ -108,12 +122,11 @@ export async function POST(req: Request) {
       fullContent += delta
       charCount += delta.length
       if (charCount - lastKvUpdate >= 3000) {
-        await updateJob(jobId, { stage: 2, message: `AI生成中... (${charCount}文字)` })
+        await updateJob(jobId, { stage: 2, message: `AI生成中... (${charCount}文字) [旧フロー]` })
         lastKvUpdate = charCount
       }
     }
 
-    // Step 4
     await updateJob(jobId, { stage: 3, message: 'テスト項目を保存中...' })
 
     const items = parseTestItems(fullContent, projectId)
@@ -133,13 +146,13 @@ export async function POST(req: Request) {
     })
 
     await updateJob(jobId, {
-      status: 'completed', stage: 4, message: '完了',
+      status: 'completed', stage: 4, message: '完了 [旧フロー]',
       count: items.length,
       breakdown: { documents: docChunks.length, siteAnalysis: siteChunks.length, sourceCode: sourceChunks.length },
       model,
     })
 
-    return NextResponse.json({ ok: true, count: items.length })
+    return NextResponse.json({ ok: true, count: items.length, deprecated: true })
 
   } catch (e) {
     const message = e instanceof Error ? e.message : 'AI生成に失敗しました'

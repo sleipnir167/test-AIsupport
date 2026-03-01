@@ -63,6 +63,7 @@ export async function POST(req: Request) {
     targetPages = null,
     modelOverride,
     ragTopK = { doc: 100, site: 40, src: 100 },
+    refOffset = 0,
   }: {
     jobId: string
     projectId: string
@@ -76,6 +77,8 @@ export async function POST(req: Request) {
     targetPages?: Array<{ url: string; title: string }> | null
     modelOverride?: string
     ragTopK?: { doc: number; site: number; src: number }
+    /** REF番号グローバルオフセット（バッチをまたいで一意にする）*/
+    refOffset?: number
   } = body
 
   log(jobId, `batch ${batchNum}/${totalBatches} planBatch=${!!planBatch} already=${alreadyCount}`)
@@ -132,6 +135,7 @@ export async function POST(req: Request) {
           perspective: planBatch.perspective,
           titles: planBatch.titles,
           customSystemPrompt: promptTemplate.systemPrompt,
+          refOffset,  // ★ グローバルREF番号オフセット
         }
       )
     } else {
@@ -270,6 +274,10 @@ export async function POST(req: Request) {
       ok: true,
       count: itemsWithOrder.length,
       aborted,
+      // aborted=true の場合は途中保存。フロントでユーザーへ通知する。
+      abortedWarning: aborted
+        ? `バッチ ${batchNum} はタイムアウト（52秒）により途中で中断されました。${itemsWithOrder.length}件のみ保存されています。`
+        : undefined,
       elapsed: Math.round(elapsedMs / 1000),
       model,
       ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length },

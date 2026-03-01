@@ -216,16 +216,38 @@ async function runCompareReview(
     return `【ファイル${i + 1}: ${f.filename}】\n件数: ${f.items.length}件 / カテゴリ: ${majors.join('、')} / 観点: ${perspectives.join('、')}\n${sample}`
   }).join('\n\n---\n\n')
 
-  const prompt = `${files.length}つのテスト設計ファイルを意味論的に比較分析してください。
+  // ★ AIがカバレッジスコアも算出するプロンプト（旧: ハードコードの数式を廃止）
+  const prompt = `${files.length}つのテスト設計ファイルを意味論的に比較・品質評価してください。
 ${fileSummaries}
 
-JSON形式のみ出力:
+JSON形式のみ出力（コードブロック不要）:
 {
-  "matchRate": 0-1,
+  "matchRate": 0.0-1.0,
   "differenceAnalysis": "差異の全体分析（400文字以内）",
   "differenceDetails": [{ "area": "領域", "fileA": "ファイル1の傾向", "fileB": "ファイル2の傾向", "description": "差異の解説（200文字以内）" }],
-  "recommendation": "統合推奨（300文字以内）"
-}`
+  "recommendation": "統合推奨（300文字以内）",
+  "fileScores": [
+    {
+      "filename": "ファイル名",
+      "itemCount": 件数,
+      "coverageScore": {
+        "iso25010": 0.0-1.0,
+        "iso29119": 0.0-1.0,
+        "owasp": 0.0-1.0,
+        "istqb": 0.0-1.0,
+        "composite": 0.0-1.0
+      },
+      "scoreReason": "スコア根拠（100文字以内）"
+    }
+  ]
+}
+
+スコア基準:
+- iso25010（ISO/IEC 25010品質特性への適合率）: 機能性・信頼性・使用性・セキュリティ・性能等の観点がどれだけカバーできているか
+- iso29119（テスト標準への準拠率）: テスト計画・設計・実行の観点の充実度
+- owasp（OWASP Top10への対応率）: セキュリティ観点の充実度
+- istqb（ISTQB技法の適用率）: 境界値分析・同値分割・状態遷移などの技法の活用度
+- composite = iso25010×0.3 + iso29119×0.3 + owasp×0.2 + istqb×0.2`
 
   const res = await client.chat.completions.create({
     model,
@@ -252,9 +274,33 @@ JSON形式のみ出力:
     elapsedMs: Date.now() - startedAt,
   })
 
-  const fileScores = files.map(f => {
-    const p = [...new Set(f.items.map(t => t.testPerspective))]
-    const has = (v: any) => p.includes(v) ? 1 : 0
+  // ★ AIが返したfileScoresを使用（旧: ハードコードの数式は廃止）
+  const aiFileScores: Array<{
+    filename: string; itemCount: number
+    coverageScore: CoverageScore; scoreReason?: string
+  }> = Array.isArray(parsed.fileScores) ? parsed.fileScores : []
+
+  const fileScores = files.map((f, idx) => {
+    const ai = aiFileScores[idx]
+    const perspectives = [...new Set(f.items.map(t => t.testPerspective))]
+    if (ai?.coverageScore) {
+      const cs = ai.coverageScore
+      const composite = 0.3 * (cs.iso25010 ?? 0) + 0.3 * (cs.iso29119 ?? 0)
+        + 0.2 * (cs.owasp ?? 0) + 0.2 * (cs.istqb ?? 0)
+      return {
+        filename: f.filename, itemCount: f.items.length,
+        coverageScore: {
+          iso25010:  Math.min(Math.max(cs.iso25010  ?? 0, 0), 1),
+          iso29119:  Math.min(Math.max(cs.iso29119  ?? 0, 0), 1),
+          owasp:     Math.min(Math.max(cs.owasp     ?? 0, 0), 1),
+          istqb:     Math.min(Math.max(cs.istqb     ?? 0, 0), 1),
+          composite: Math.round(composite * 100) / 100,
+        } as CoverageScore,
+        uniquePerspectives: perspectives,
+      }
+    }
+    // AIがスコアを返さなかった場合のフォールバック（旧ロジック）
+    const has = (v: string) => perspectives.includes(v) ? 1 : 0
     const ps = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
     return {
       filename: f.filename, itemCount: f.items.length,
@@ -263,7 +309,7 @@ JSON形式のみ出力:
         owasp: has('セキュリティ') * 0.6 + 0.1, istqb: Math.min(ps * 0.75 + 0.1, 1),
         composite: Math.min(ps * 0.75 + 0.12, 1),
       } as CoverageScore,
-      uniquePerspectives: p,
+      uniquePerspectives: perspectives,
     }
   })
 

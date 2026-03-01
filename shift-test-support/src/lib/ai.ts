@@ -376,6 +376,8 @@ export interface BatchFromPlanOptions {
   perspective: string
   titles: string[]
   customSystemPrompt?: string
+  /** REF番号をバッチをまたいで一意にするためのグローバルオフセット（省略時 = 0）*/
+  refOffset?: number
 }
 
 export function buildBatchFromPlanPrompts(
@@ -385,6 +387,8 @@ export function buildBatchFromPlanPrompts(
   options: BatchFromPlanOptions
 ): BuildPromptsResult {
   const { batchId, totalBatches, category, perspective, titles } = options
+  // refOffset: バッチをまたいでREF番号がグローバルで一意になるよう加算する
+  const refOffset = options.refOffset ?? 0
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
@@ -392,17 +396,17 @@ export function buildBatchFromPlanPrompts(
 
   const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
   const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
-    refId: `REF-${i + 1}`,
+    refId: `REF-${refOffset + i + 1}`,
     filename: c.filename,
     category: c.category,
     excerpt: c.text.slice(0, 250),
     pageUrl: c.pageUrl,
   }))
 
-  const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
+  const buildContext = (list: VectorMetadata[], label: string, maxLen: number, localOffset = 0) => {
     if (!list.length) return ''
     const text = list
-      .map((c, i) => `[REF-${offset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
+      .map((c, i) => `[REF-${refOffset + localOffset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
       .join('\n\n')
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
