@@ -1,9 +1,9 @@
 import { Redis } from '@upstash/redis'
-import type { Project, TestItem, Document, SiteAnalysis } from '@/types'
+import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings } from '@/types'
 
 export const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 })
 
 const KEY = {
@@ -157,4 +157,86 @@ export async function updateJob(jobId: string, patch: Partial<GenerationJob>): P
   const existing = await redis.get<GenerationJob>(JOB_KEY(jobId))
   if (!existing) return
   await redis.set(JOB_KEY(jobId), { ...existing, ...patch, updatedAt: new Date().toISOString() }, { ex: JOB_TTL })
+}
+
+// ─── AIログ ────────────────────────────────────────────────────
+
+const LOG_KEY = {
+  logList:   (projectId: string) => `project:${projectId}:ailogs`,
+  log:       (id: string)        => `ailog:${id}`,
+  allLogs:                         'global:ailogs',
+  template:                        'admin:prompttemplate',
+  settings:                        'admin:settings',
+}
+const LOG_TTL = 60 * 60 * 24 * 30 // 30日
+
+export async function saveAILog(entry: AILogEntry): Promise<void> {
+  await redis.set(LOG_KEY.log(entry.id), entry, { ex: LOG_TTL })
+  await redis.lpush(LOG_KEY.logList(entry.projectId), entry.id)
+  await redis.ltrim(LOG_KEY.logList(entry.projectId), 0, 199) // 最大200件/プロジェクト
+  await redis.lpush(LOG_KEY.allLogs, entry.id)
+  await redis.ltrim(LOG_KEY.allLogs, 0, 999) // 全体最大1000件
+}
+
+export async function getAILogs(projectId: string): Promise<AILogEntry[]> {
+  const ids = await redis.lrange(LOG_KEY.logList(projectId), 0, 99)
+  if (!ids.length) return []
+  const entries = await Promise.all(ids.map(id => redis.get<AILogEntry>(LOG_KEY.log(String(id)))))
+  return entries.filter((e): e is AILogEntry => e !== null)
+}
+
+export async function getAllAILogs(): Promise<AILogEntry[]> {
+  const ids = await redis.lrange(LOG_KEY.allLogs, 0, 299)
+  if (!ids.length) return []
+  const entries = await Promise.all(ids.map(id => redis.get<AILogEntry>(LOG_KEY.log(String(id)))))
+  return entries.filter((e): e is AILogEntry => e !== null)
+}
+
+// ─── プロンプトテンプレート ─────────────────────────────────────
+const DEFAULT_TEMPLATE: PromptTemplate = {
+  id: 'default',
+  name: 'デフォルト',
+  description: 'システムデフォルトのプロンプトテンプレート',
+  systemPrompt: `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
+提供されたシステム仕様・設計書・サイト構造・ソースコードを分析し、品質を担保するための網羅的なテスト項目書を日本語で作成してください。
+必ずJSON配列のみで回答し、マークダウンのコードブロックや説明文は一切含めないでください。
+件数は必ず指定された数を出力してください。`,
+  reviewSystemPrompt: `あなたはソフトウェアテスト品質保証の第三者評価専門家です。
+ISO/IEC 25010、ISO/IEC/IEEE 29119、OWASP ASVS、ISTQBの各標準に精通し、
+テスト設計の妥当性を定量的かつ客観的に評価します。
+自己正当化バイアスを排除し、第三者視点で厳正に評価してください。
+必ずJSON形式のみで回答し、説明文やコードブロックは含めないでください。
+improvementSuggestions と coverageMissingAreas の suggestedTests には、
+現場エンジニアが「なるほど、こういうテストか」と即理解できる具体的なテストケース例を必ず含めてください。`,
+  updatedAt: new Date().toISOString(),
+}
+
+export async function getPromptTemplate(): Promise<PromptTemplate> {
+  const saved = await redis.get<PromptTemplate>(LOG_KEY.template)
+  return saved ?? DEFAULT_TEMPLATE
+}
+
+export async function savePromptTemplate(template: Partial<PromptTemplate>): Promise<void> {
+  const current = await getPromptTemplate()
+  await redis.set(LOG_KEY.template, { ...current, ...template, updatedAt: new Date().toISOString() })
+}
+
+// ─── 管理設定 ──────────────────────────────────────────────────
+const DEFAULT_SETTINGS: AdminSettings = {
+  defaultTemperature: 0.4,
+  reviewTemperature: 0.2,
+  defaultMaxTokens: 12000,
+  reviewMaxTokens: 5000,
+  logRetentionDays: 30,
+  updatedAt: new Date().toISOString(),
+}
+
+export async function getAdminSettings(): Promise<AdminSettings> {
+  const saved = await redis.get<AdminSettings>(LOG_KEY.settings)
+  return saved ?? DEFAULT_SETTINGS
+}
+
+export async function saveAdminSettings(settings: Partial<AdminSettings>): Promise<void> {
+  const current = await getAdminSettings()
+  await redis.set(LOG_KEY.settings, { ...current, ...settings, updatedAt: new Date().toISOString() })
 }

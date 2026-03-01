@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import type { TestItem, DesignMeta, ReviewResult, ExcelCompareResult, CoverageScore, PerspectiveHeatmapCell } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
+import { saveAILog, getPromptTemplate, getAdminSettings, getProject } from '@/lib/db'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -21,161 +22,121 @@ function createClient(modelId: string): { client: OpenAI; model: string } {
   }
 }
 
-// 観点カバレッジヒートマップを計算（AIに頼らずロジックで算出）
-function calcPerspectiveHeatmap(items: TestItem[]): PerspectiveHeatmapCell[] {
-  const ALL_PERSPECTIVES = ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性', '性能']
-  const total = items.length || 1
-  const countMap = new Map<string, number>()
-  ALL_PERSPECTIVES.forEach(p => countMap.set(p, 0))
-  items.forEach(t => {
-    const p = t.testPerspective
-    if (countMap.has(p)) countMap.set(p, (countMap.get(p) ?? 0) + 1)
-  })
+function estimateTokens(text: string): number {
+  const japanese = (text.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length
+  return Math.ceil(japanese + (text.length - japanese) / 4)
+}
 
-  // 理想的な配分（業界標準的な比率）
-  const idealRatio: Record<string, number> = {
+function calcPerspectiveHeatmap(items: TestItem[]): PerspectiveHeatmapCell[] {
+  const ALL = ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性', '性能']
+  const ideal: Record<string, number> = {
     '機能テスト': 0.25, '正常系': 0.20, '異常系': 0.20,
     '境界値': 0.12, 'セキュリティ': 0.10, '操作性': 0.08, '性能': 0.05,
   }
-
-  return ALL_PERSPECTIVES.map(p => {
+  const total = items.length || 1
+  const countMap = new Map<string, number>()
+  ALL.forEach(p => countMap.set(p, 0))
+  items.forEach(t => countMap.set(t.testPerspective, (countMap.get(t.testPerspective) ?? 0) + 1))
+  return ALL.map(p => {
     const count = countMap.get(p) ?? 0
     const ratio = count / total
-    const ideal = idealRatio[p] ?? 0.1
-    const deviation = ratio - ideal
-
-    let biasLevel: 'over' | 'balanced' | 'under'
-    let recommendation: string
-
-    if (deviation > 0.1) {
-      biasLevel = 'over'
-      recommendation = `全体の${Math.round(ratio * 100)}%（${count}件）と過多です。理想配分は${Math.round(ideal * 100)}%程度。他観点に振り分けを検討してください。`
-    } else if (deviation < -0.07) {
-      biasLevel = 'under'
-      if (count === 0) {
-        recommendation = `テストが0件です。この観点は未カバーです。追加を強く推奨します。`
-      } else {
-        recommendation = `全体の${Math.round(ratio * 100)}%（${count}件）と少なめです。理想は${Math.round(ideal * 100)}%程度（約${Math.round(total * ideal)}件）。`
-      }
-    } else {
-      biasLevel = 'balanced'
-      recommendation = `${count}件（${Math.round(ratio * 100)}%）。適切なカバレッジです。`
-    }
-
+    const dev = ratio - (ideal[p] ?? 0.1)
+    const biasLevel = dev > 0.1 ? 'over' : dev < -0.07 ? 'under' : 'balanced'
+    const recommendation = biasLevel === 'over'
+      ? `${Math.round(ratio * 100)}%（${count}件）と過多。理想は${Math.round((ideal[p] ?? 0.1) * 100)}%程度。`
+      : biasLevel === 'under'
+        ? count === 0 ? `0件。この観点は未カバーです。追加を強く推奨。`
+          : `${Math.round(ratio * 100)}%（${count}件）と少なめ。理想は${Math.round((ideal[p] ?? 0.1) * 100)}%程度。`
+        : `${count}件（${Math.round(ratio * 100)}%）。適切なカバレッジです。`
     return { perspective: p, count, ratio, biasLevel, recommendation }
   })
 }
 
-// ─── 単一ファイルレビュー ──────────────────────────────────────
 async function runSingleReview(
-  items: TestItem[],
-  designMeta: DesignMeta | undefined,
-  reviewModelId: string,
-  reviewModelLabel: string,
-  projectId: string,
+  items: TestItem[], designMeta: DesignMeta | undefined,
+  reviewModelId: string, reviewModelLabel: string, projectId: string,
 ): Promise<ReviewResult> {
+  const startedAt = Date.now()
   const { client, model } = createClient(reviewModelId)
+  const [adminSettings, promptTemplate, project] = await Promise.all([getAdminSettings(), getPromptTemplate(), getProject(projectId)])
 
-  const metaContext = designMeta ? `
-【テスト設計メタ情報】
-- 対象業界: ${designMeta.industry}
-- システム特性: ${designMeta.systemCharacteristics.join('、')}
-- 設計アプローチ: ${designMeta.designApproaches.join('、')}
-- 使用モデル: ${designMeta.modelLabel}
-- 生成件数: ${designMeta.maxItems}件
-- テスト観点: ${designMeta.perspectives.join('、')}
-` : ''
+  const metaContext = designMeta ? `\n【テスト設計メタ情報】\n- 対象業界: ${designMeta.industry}\n- システム特性: ${designMeta.systemCharacteristics.join('、')}\n- 設計アプローチ: ${designMeta.designApproaches.join('、')}\n- 使用モデル: ${designMeta.modelLabel}\n- 生成件数: ${designMeta.maxItems}件\n- テスト観点: ${designMeta.perspectives.join('、')}\n` : ''
 
-  const perspectives = [...new Set(items.map(t => t.testPerspective))]
-  const majors = [...new Set(items.map(t => t.categoryMajor))]
   const perspCountMap: Record<string, number> = {}
   items.forEach(t => { perspCountMap[t.testPerspective] = (perspCountMap[t.testPerspective] ?? 0) + 1 })
+  const majors = [...new Set(items.map(t => t.categoryMajor))]
   const perspBreakdown = Object.entries(perspCountMap).map(([k, v]) => `${k}:${v}件`).join('、')
+  const itemsSummary = items.slice(0, 150).map(t => `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`).join('\n')
 
-  const itemsSummary = items.slice(0, 150).map(t =>
-    `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`
-  ).join('\n')
-
-  const systemPrompt = `あなたはソフトウェアテスト品質保証の第三者評価専門家です。
-ISO/IEC 25010、ISO/IEC/IEEE 29119、OWASP ASVS、ISTQBの各標準に精通し、
-テスト設計の妥当性を定量的かつ客観的に評価します。
-自己正当化バイアスを排除し、第三者視点で厳正に評価してください。
-必ずJSON形式のみで回答し、説明文やコードブロックは含めないでください。
-improvementSuggestions と coverageMissingAreas の suggestedTests には、
-現場エンジニアが「なるほど、こういうテストか」と即理解できる具体的なテストケース例を必ず含めてください。`
+  // カスタムプロンプト対応
+  const systemPrompt = promptTemplate.reviewSystemPrompt
 
   const userPrompt = `以下のテスト設計を第三者評価してください。
 ${metaContext}
 【テスト項目概要】
-総件数: ${items.length}件
-カテゴリ: ${majors.join('、')}
-テスト観点別件数: ${perspBreakdown}
+総件数: ${items.length}件 / カテゴリ: ${majors.join('、')} / 観点別: ${perspBreakdown}
 
 【テスト項目リスト（先頭150件）】
 ${itemsSummary}
 
-以下の形式でJSONのみ出力してください（コードブロック不要）:
+以下の形式でJSONのみ出力（コードブロック不要）:
 {
-  "coverageScore": {
-    "iso25010": 0.0から1.0,
-    "iso29119": 0.0から1.0,
-    "owasp": 0.0から1.0,
-    "istqb": 0.0から1.0
-  },
-  "scoreReason": "各スコアを付けた根拠を具体的に説明（300文字以内）。どの観点が高い/低いスコアになった理由を明記",
-  "overallSummary": "テスト設計全体の総評（400文字以内）。強みと弱みを明確に。業界・システム特性への適合度も含める",
-  "missingPerspectives": [
-    "【観点名】具体的な欠落内容と、その影響（例：「セキュリティ - SQLインジェクション検証が0件。ログイン・検索フォームなど入力箇所全般で悪意ある入力値のテストが必要」）"
-  ],
-  "defectRiskAnalysis": "欠陥混入リスク分析（300文字以内）。どのカテゴリで欠陥が混入しやすいか、その理由と影響を具体的に記述",
-  "improvementSuggestions": [
-    "【改善タイトル】具体的な改善内容。例：「○○画面の□□機能で、入力値が△△の場合に××されることを確認するテストを追加」のように実装可能な粒度で記載"
-  ],
-  "heatmap": [
-    {
-      "category": "カテゴリ名",
-      "riskLevel": "critical|high|medium|low",
-      "score": 0.0から1.0,
-      "reason": "リスク理由（例：『入力フォームの異常系テストが2件のみ。バリデーション抜けによる不正データ登録リスクが高い』）"
-    }
-  ],
-  "coverageMissingAreas": [
-    {
-      "area": "不足領域名",
-      "severity": "critical|high|medium",
-      "description": "不足内容の説明。現在の状態と何が足りないかを具体的に",
-      "suggestedTests": [
-        "具体的なテストケース例（例：「メールアドレス入力欄に256文字以上の文字列を入力し、エラーメッセージが表示されることを確認」）"
-      ],
-      "relatedStandard": "ISO25010|ISO29119|OWASP|ISTQB"
-    }
-  ]
+  "coverageScore": { "iso25010": 0-1, "iso29119": 0-1, "owasp": 0-1, "istqb": 0-1 },
+  "scoreReason": "各スコアの根拠（300文字以内）",
+  "overallSummary": "総評（400文字以内）。強み・弱み・業界適合度を含む",
+  "missingPerspectives": ["【観点名】欠落内容と影響の説明（具体例付き）"],
+  "defectRiskAnalysis": "欠陥混入リスク分析（300文字以内）",
+  "improvementSuggestions": ["【タイトル】実装可能な粒度の具体的改善内容"],
+  "heatmap": [{ "category": "名前", "riskLevel": "critical|high|medium|low", "score": 0-1, "reason": "理由" }],
+  "coverageMissingAreas": [{
+    "area": "領域名", "severity": "critical|high|medium",
+    "description": "不足内容の具体的説明",
+    "suggestedTests": ["具体的なテストケース例（そのまま使えるレベルで）"],
+    "relatedStandard": "ISO25010|ISO29119|OWASP|ISTQB"
+  }]
 }
 
-スコア評価基準:
-- iso25010（×0.3）: 機能性・信頼性・使用性・効率性・保守性・移植性の各品質特性のカバレッジ
-- iso29119（×0.3）: テスト計画・設計技法・実行・記録の標準手順適合度
-- owasp（×0.2）: OWASP ASVSのセキュリティ検証項目カバレッジ（${designMeta?.systemCharacteristics.includes('セキュリティ重要') ? '特に重視' : '標準評価'}）
-- istqb（×0.2）: 同値分割・境界値分析・デシジョンテーブル・状態遷移などの技法適用率
-- heatmapはカテゴリごとの欠陥リスク（scoreが高いほどリスク大）
-- coverageMissingAreasはシステム特性（${designMeta?.systemCharacteristics.join('、') || '不明'}）と業界（${designMeta?.industry || '不明'}）を考慮`
+スコア基準: iso25010×0.3=品質特性, iso29119×0.3=テスト標準, owasp×0.2=セキュリティ(${designMeta?.systemCharacteristics?.includes('セキュリティ重要') ? '特に重視' : '標準'}), istqb×0.2=テスト技法
+業界: ${designMeta?.industry ?? '不明'} / 特性: ${designMeta?.systemCharacteristics?.join('、') ?? '不明'}`
 
   const res = await client.chat.completions.create({
     model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    temperature: 0.2,
-    max_tokens: 5000,
+    messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+    temperature: adminSettings.reviewTemperature,
+    max_tokens: adminSettings.reviewMaxTokens,
   })
 
   const raw = res.choices[0]?.message?.content ?? '{}'
   const clean = raw.replace(/```(?:json)?/gi, '').trim()
   const parsed = JSON.parse(clean)
-
   const cs = parsed.coverageScore ?? {}
   const composite = 0.3 * (cs.iso25010 ?? 0) + 0.3 * (cs.iso29119 ?? 0) + 0.2 * (cs.owasp ?? 0) + 0.2 * (cs.istqb ?? 0)
+
+  const sysT = estimateTokens(systemPrompt)
+  const userT = estimateTokens(userPrompt)
+  const respT = estimateTokens(raw)
+  await saveAILog({
+    id: uuidv4(),
+    projectId,
+    projectName: project?.name ?? '',
+    type: 'review',
+    modelId: reviewModelId,
+    modelLabel: reviewModelLabel,
+    createdAt: new Date().toISOString(),
+    systemPrompt: systemPrompt.slice(0, 3000),
+    userPrompt: userPrompt.slice(0, 4000),
+    responseText: raw.slice(0, 2000),
+    outputItemCount: 0,
+    aborted: false,
+    systemTokensEst: sysT,
+    userTokensEst: userT,
+    responseTokensEst: respT,
+    totalTokensEst: sysT + userT + respT,
+    promptTokensActual: res.usage?.prompt_tokens,
+    completionTokensActual: res.usage?.completion_tokens,
+    totalTokensActual: res.usage?.total_tokens,
+    elapsedMs: Date.now() - startedAt,
+  })
 
   return {
     id: uuidv4(),
@@ -186,10 +147,8 @@ ${itemsSummary}
     targetSource: 'generated',
     totalItems: items.length,
     coverageScore: {
-      iso25010: cs.iso25010 ?? 0,
-      iso29119: cs.iso29119 ?? 0,
-      owasp: cs.owasp ?? 0,
-      istqb: cs.istqb ?? 0,
+      iso25010: cs.iso25010 ?? 0, iso29119: cs.iso29119 ?? 0,
+      owasp: cs.owasp ?? 0, istqb: cs.istqb ?? 0,
       composite: Math.round(composite * 100) / 100,
     },
     scoreReason: parsed.scoreReason ?? '',
@@ -204,91 +163,89 @@ ${itemsSummary}
   }
 }
 
-// ─── 複数Excel比較レビュー ──────────────────────────────────────
 async function runCompareReview(
   files: Array<{ filename: string; items: TestItem[] }>,
   reviewModelId: string,
   designMeta: DesignMeta | undefined,
+  projectId: string,
 ): Promise<ExcelCompareResult> {
+  const startedAt = Date.now()
   const { client, model } = createClient(reviewModelId)
+  const [adminSettings] = await Promise.all([getAdminSettings()])
 
   const fileSummaries = files.map((f, i) => {
     const perspectives = [...new Set(f.items.map(t => t.testPerspective))]
     const majors = [...new Set(f.items.map(t => t.categoryMajor))]
     const sample = f.items.slice(0, 80).map(t => `[${t.testId}] ${t.categoryMajor}/${t.testPerspective}: ${t.testTitle}`).join('\n')
-    return `【ファイル${i + 1}: ${f.filename}】
-件数: ${f.items.length}件 / カテゴリ: ${majors.join('、')} / 観点: ${perspectives.join('、')}
-項目サンプル:\n${sample}`
+    return `【ファイル${i + 1}: ${f.filename}】\n件数: ${f.items.length}件 / カテゴリ: ${majors.join('、')} / 観点: ${perspectives.join('、')}\n${sample}`
   }).join('\n\n---\n\n')
 
-  const prompt = `以下の${files.length}つのテスト設計ファイルを意味論的に比較分析してください。
-純粋な文字列比較ではなく、テスト意図・カバレッジ・設計思想の差異を抽出してください。
-differenceDetailsのfileA/fileBには、そのファイルの具体的なテスト傾向（例：「AはXXXに注力しているが、YYYが弱い」）を記載。
-
+  const prompt = `${files.length}つのテスト設計ファイルを意味論的に比較分析してください。
 ${fileSummaries}
 
-JSON形式のみで出力:
+JSON形式のみ出力:
 {
-  "matchRate": 0.0から1.0,
-  "differenceAnalysis": "差異の全体的な分析（400文字以内）",
-  "differenceDetails": [
-    {
-      "area": "差異が生じている領域",
-      "fileA": "ファイル1の具体的な特徴・傾向（例：「正常系中心で100件、異常系は5件のみ」）",
-      "fileB": "ファイル2の具体的な特徴・傾向",
-      "description": "差異の意味論的な解説。どちらが良いかの判断も含める（200文字以内）"
-    }
-  ],
-  "recommendation": "どのファイルの設計が優れているか、または統合推奨（300文字以内）"
+  "matchRate": 0-1,
+  "differenceAnalysis": "差異の全体分析（400文字以内）",
+  "differenceDetails": [{ "area": "領域", "fileA": "ファイル1の傾向", "fileB": "ファイル2の傾向", "description": "差異の解説（200文字以内）" }],
+  "recommendation": "統合推奨（300文字以内）"
 }`
 
   const res = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2,
-    max_tokens: 3000,
+    temperature: adminSettings.reviewTemperature,
+    max_tokens: adminSettings.reviewMaxTokens,
   })
-
   const raw = res.choices[0]?.message?.content ?? '{}'
   const clean = raw.replace(/```(?:json)?/gi, '').trim()
   const parsed = JSON.parse(clean)
 
+  const pT = estimateTokens(prompt)
+  const rT = estimateTokens(raw)
+  await saveAILog({
+    id: uuidv4(), projectId, projectName: '', type: 'compare',
+    modelId: reviewModelId, modelLabel: reviewModelId,
+    createdAt: new Date().toISOString(),
+    systemPrompt: '', userPrompt: prompt.slice(0, 4000),
+    responseText: raw.slice(0, 2000), outputItemCount: 0, aborted: false,
+    systemTokensEst: 0, userTokensEst: pT, responseTokensEst: rT, totalTokensEst: pT + rT,
+    promptTokensActual: res.usage?.prompt_tokens,
+    completionTokensActual: res.usage?.completion_tokens,
+    totalTokensActual: res.usage?.total_tokens,
+    elapsedMs: Date.now() - startedAt,
+  })
+
   const fileScores = files.map(f => {
     const p = [...new Set(f.items.map(t => t.testPerspective))]
-    const has = (v: string) => (p as string[]).includes(v) ? 1 : 0
-    const perspScore = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
+    const has = (v: string) => p.includes(v) ? 1 : 0
+    const ps = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
     return {
-      filename: f.filename,
-      itemCount: f.items.length,
+      filename: f.filename, itemCount: f.items.length,
       coverageScore: {
-        iso25010: Math.min(perspScore * 0.8 + 0.1, 1),
-        iso29119: Math.min(perspScore * 0.7 + 0.15, 1),
-        owasp: has('セキュリティ') * 0.6 + 0.1,
-        istqb: Math.min(perspScore * 0.75 + 0.1, 1),
-        composite: Math.min(perspScore * 0.75 + 0.12, 1),
+        iso25010: Math.min(ps * 0.8 + 0.1, 1), iso29119: Math.min(ps * 0.7 + 0.15, 1),
+        owasp: has('セキュリティ') * 0.6 + 0.1, istqb: Math.min(ps * 0.75 + 0.1, 1),
+        composite: Math.min(ps * 0.75 + 0.12, 1),
       } as CoverageScore,
       uniquePerspectives: p,
     }
   })
 
   return {
-    files: fileScores,
-    matchRate: parsed.matchRate ?? 0.5,
+    files: fileScores, matchRate: parsed.matchRate ?? 0.5,
     differenceAnalysis: parsed.differenceAnalysis ?? '',
     differenceDetails: parsed.differenceDetails ?? [],
     recommendation: parsed.recommendation ?? '',
   }
 }
 
-// テスト項目をXLSXデータから変換
 function parseExcelItems(rows: string[][]): TestItem[] {
   if (rows.length < 2) return []
   const header = rows[0]
-  const idxOf = (name: string) => header.findIndex(h => h && h.includes(name))
-  const idIdx = idxOf('テストID'); const majorIdx = idxOf('大分類'); const minorIdx = idxOf('中分類')
-  const perspIdx = idxOf('テスト観点'); const titleIdx = idxOf('テスト項目名'); const preIdx = idxOf('事前条件')
-  const stepsIdx = idxOf('テスト手順'); const expIdx = idxOf('期待結果'); const prioIdx = idxOf('優先度'); const autoIdx = idxOf('自動化可否')
-
+  const idxOf = (name: string) => header.findIndex(h => h?.includes(name))
+  const idIdx = idxOf('テストID'), majorIdx = idxOf('大分類'), minorIdx = idxOf('中分類')
+  const perspIdx = idxOf('テスト観点'), titleIdx = idxOf('テスト項目名'), preIdx = idxOf('事前条件')
+  const stepsIdx = idxOf('テスト手順'), expIdx = idxOf('期待結果'), prioIdx = idxOf('優先度'), autoIdx = idxOf('自動化可否')
   return rows.slice(1).filter(r => r.some(c => c?.trim())).map((row, i) => ({
     id: uuidv4(), projectId: '',
     testId: row[idIdx] || `TC-${String(i + 1).padStart(3, '0')}`,
@@ -309,16 +266,13 @@ export async function POST(req: Request) {
     const reviewModelId = formData.get('reviewModelId') as string || 'google/gemini-2.0-flash-001'
     const reviewModelLabel = formData.get('reviewModelLabel') as string || 'Gemini 2.0 Flash'
     const projectId = formData.get('projectId') as string || ''
-    const designMetaRaw = formData.get('designMeta') as string | null
-    const designMeta: DesignMeta | undefined = designMetaRaw ? JSON.parse(designMetaRaw) : undefined
+    const designMeta: DesignMeta | undefined = (() => { try { return JSON.parse(formData.get('designMeta') as string) } catch { return undefined } })()
 
     if (action === 'review_generated') {
-      const itemsRaw = formData.get('items') as string
-      const items: TestItem[] = JSON.parse(itemsRaw)
+      const items: TestItem[] = JSON.parse(formData.get('items') as string)
       const result = await runSingleReview(items, designMeta, reviewModelId, reviewModelLabel, projectId)
       return NextResponse.json(result)
     }
-
     if (action === 'review_excel') {
       const XLSX = await import('xlsx')
       const file = formData.get('file') as File
@@ -332,7 +286,6 @@ export async function POST(req: Request) {
       result.targetSource = 'excel'
       return NextResponse.json(result)
     }
-
     if (action === 'compare_excel') {
       const XLSX = await import('xlsx')
       const fileList: Array<{ filename: string; items: TestItem[] }> = []
@@ -342,16 +295,14 @@ export async function POST(req: Request) {
         if (!f) break
         const buf = await f.arrayBuffer()
         const wb = XLSX.read(buf, { type: 'array' })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]
+        const rows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[wb.SheetNames[0]], { header: 1 }) as string[][]
         fileList.push({ filename: f.name, items: parseExcelItems(rows) })
         i++
       }
       if (fileList.length < 2) return NextResponse.json({ error: '2ファイル以上必要です' }, { status: 400 })
-      const result = await runCompareReview(fileList, reviewModelId, designMeta)
+      const result = await runCompareReview(fileList, reviewModelId, designMeta, projectId)
       return NextResponse.json(result)
     }
-
     return NextResponse.json({ error: '不明なaction' }, { status: 400 })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

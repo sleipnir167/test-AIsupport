@@ -188,3 +188,64 @@ export interface ExcelCompareResult {
   }>
   recommendation: string
 }
+
+// ─── AIログ ────────────────────────────────────────────────────
+export interface AILogEntry {
+  id: string
+  projectId: string
+  projectName: string
+  type: 'generation' | 'review' | 'compare'
+  modelId: string
+  modelLabel: string
+  batchNum?: number
+  totalBatches?: number
+  createdAt: string
+
+  // プロンプト
+  systemPrompt: string
+  userPrompt: string
+
+  // レスポンス
+  responseText: string         // 生のレスポンス（先頭2000文字）
+  outputItemCount: number       // 生成件数（テスト項目数）
+  aborted: boolean
+
+  // トークン概算（chars÷4）
+  systemTokensEst: number
+  userTokensEst: number
+  responseTokensEst: number
+  totalTokensEst: number
+
+  // 実際のトークン（APIから取得できた場合）
+  promptTokensActual?: number
+  completionTokensActual?: number
+  totalTokensActual?: number
+
+  // RAG情報
+  ragBreakdown?: { doc: number; site: number; src: number }
+  refMapCount?: number
+
+  // エラー
+  error?: string
+  elapsedMs: number
+}
+
+// ─── プロンプトテンプレート ─────────────────────────────────────
+export interface PromptTemplate {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string      // 生成AI用システムプロンプト
+  reviewSystemPrompt: string  // レビューAI用システムプロンプト
+  updatedAt: string
+}
+
+// ─── 管理設定 ──────────────────────────────────────────────────
+export interface AdminSettings {
+  defaultTemperature: number      // 生成AI温度（0-1）
+  reviewTemperature: number       // レビューAI温度（0-1）
+  defaultMaxTokens: number        // 生成AI max_tokens
+  reviewMaxTokens: number         // レビューAI max_tokens
+  logRetentionDays: number        // ログ保持日数
+  updatedAt: string
+}

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { getProject, saveTestItems, updateJob } from '@/lib/db'
+import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
 import { buildPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
 import OpenAI from 'openai'
 import type { PageInfo } from '@/types'
+import { v4 as uuidv4 } from 'uuid'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -35,6 +36,13 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
   }
 }
 
+// トークン概算（英語4文字≒1トークン、日本語1文字≒1トークン）
+function estimateTokens(text: string): number {
+  const japanese = (text.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length
+  const other = text.length - japanese
+  return Math.ceil(japanese + other / 4)
+}
+
 export async function POST(req: Request) {
   const startedAt = Date.now()
   const body = await req.json()
@@ -55,13 +63,18 @@ export async function POST(req: Request) {
   const project = await getProject(projectId)
   if (!project) return NextResponse.json({ error: 'project not found' }, { status: 404 })
 
+  // 管理設定・プロンプトテンプレートを取得
+  const [adminSettings, promptTemplate] = await Promise.all([
+    getAdminSettings(),
+    getPromptTemplate(),
+  ])
+
   try {
     await updateJob(jobId, {
       stage: 2,
       message: `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済)`,
     })
 
-    // RAG検索
     const baseQuery = `${project.targetSystem} テスト項目 機能 要件 画面 操作 入力 エラー`
     const pageQuery = targetPages?.length
       ? `${baseQuery} ${targetPages.map(p => p.title).join(' ')}`
@@ -84,14 +97,14 @@ export async function POST(req: Request) {
 
     const result: BuildPromptsResult = buildPrompts(
       project.name, project.targetSystem, allChunks,
-      { maxItems: batchSize, perspectives, perspectiveWeights, targetPages }
+      {
+        maxItems: batchSize, perspectives, perspectiveWeights, targetPages,
+        customSystemPrompt: promptTemplate.systemPrompt,
+      }
     )
     const { systemPrompt, userPrompt, refMap } = result
     log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
-    log(jobId, '[SYSTEM PROMPT]\n' + systemPrompt)
-    log(jobId, '[USER PROMPT]\n' + userPrompt.slice(0, 2000))
 
-    // KVにデバッグ情報を保存（バッチ1のみ、その後は上書きしない）
     if (batchNum === 1) {
       await updateJob(jobId, {
         stage: 2,
@@ -127,12 +140,11 @@ export async function POST(req: Request) {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.4,
-      max_tokens: 12000,
+      temperature: adminSettings.defaultTemperature,
+      max_tokens: adminSettings.defaultMaxTokens,
       stream: true,
     }, { signal: abortController.signal })
 
-    log(jobId, 'Stream opened')
     let fullContent = ''
     let charCount = 0
     let lastKvUpdate = 0
@@ -146,7 +158,6 @@ export async function POST(req: Request) {
         charCount += delta.length
         if (charCount - lastKvUpdate >= 2000) {
           const elapsed = Math.round((Date.now() - startedAt) / 1000)
-          log(jobId, `streaming: ${charCount}c elapsed=${elapsed}s`)
           await updateJob(jobId, {
             stage: 2,
             message: `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済 / ${charCount}文字 / ${elapsed}秒)`,
@@ -165,9 +176,6 @@ export async function POST(req: Request) {
       clearTimeout(abortTimer)
     }
 
-    log(jobId, `Stream done: ${charCount}chars aborted=${aborted}`)
-    log(jobId, `[AI OUTPUT preview]\n${fullContent.slice(0, 500)}`)
-
     const items = parseTestItems(fullContent, projectId, refMap ?? [])
     log(jobId, `Parsed: ${items.length} items`)
 
@@ -175,8 +183,38 @@ export async function POST(req: Request) {
       await saveTestItems(items)
     }
 
-    const elapsed = Math.round((Date.now() - startedAt) / 1000)
-    return NextResponse.json({ ok: true, count: items.length, aborted, elapsed, model,
+    const elapsedMs = Date.now() - startedAt
+
+    // ── AIログ保存 ──────────────────────────────────────────
+    const sysTokens = estimateTokens(systemPrompt)
+    const userTokens = estimateTokens(userPrompt)
+    const respTokens = estimateTokens(fullContent)
+    await saveAILog({
+      id: uuidv4(),
+      projectId,
+      projectName: project.name,
+      type: 'generation',
+      modelId: model,
+      modelLabel: model,
+      batchNum,
+      totalBatches,
+      createdAt: new Date().toISOString(),
+      systemPrompt: systemPrompt.slice(0, 3000),
+      userPrompt: userPrompt.slice(0, 4000),
+      responseText: fullContent.slice(0, 2000),
+      outputItemCount: items.length,
+      aborted,
+      systemTokensEst: sysTokens,
+      userTokensEst: userTokens,
+      responseTokensEst: respTokens,
+      totalTokensEst: sysTokens + userTokens + respTokens,
+      ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length },
+      refMapCount: refMap.length,
+      elapsedMs,
+    })
+
+    return NextResponse.json({
+      ok: true, count: items.length, aborted, elapsed: Math.round(elapsedMs / 1000), model,
       ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length }
     })
 
@@ -186,6 +224,28 @@ export async function POST(req: Request) {
     log(jobId, 'ERROR:', message, stack)
     await updateJob(jobId, { status: 'error', error: message, // @ts-ignore
       debugError: stack })
+    await saveAILog({
+      id: uuidv4(),
+      projectId,
+      projectName: project.name,
+      type: 'generation',
+      modelId: modelOverride || 'unknown',
+      modelLabel: modelOverride || 'unknown',
+      batchNum,
+      totalBatches,
+      createdAt: new Date().toISOString(),
+      systemPrompt: '',
+      userPrompt: '',
+      responseText: '',
+      outputItemCount: 0,
+      aborted: false,
+      systemTokensEst: 0,
+      userTokensEst: 0,
+      responseTokensEst: 0,
+      totalTokensEst: 0,
+      elapsedMs: Date.now() - startedAt,
+      error: message,
+    })
     return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }
