@@ -18,7 +18,7 @@ const ALL_PERSPECTIVES = ['機能テスト','正常系','異常系','境界値',
 const PERSPECTIVE_OPTIONS = ALL_PERSPECTIVES.map(v => ({ label: v, value: v }))
 
 // モデル一覧は管理者設定から動的に取得する。フォールバック用デフォルト値。
-const DEFAULT_MODEL_OPTIONS: CustomModelEntry[] = [
+const MODEL_OPTIONS: CustomModelEntry[] = [
   { id:'deepseek/deepseek-v3.2',           label:'DeepSeek V3.2',          inputCost:'$0.20', outputCost:'$0.35',  feature:'最安クラス。出力量が多いならこれ一択',  speed:'高速' },
   { id:'google/gemini-2.5-flash',          label:'Gemini 2.5 Flash',        inputCost:'$0.15', outputCost:'$0.60',  feature:'最新Gemini。高精度かつ爆速',          speed:'爆速' },
   { id:'google/gemini-3-flash-preview',    label:'Gemini 3 Flash Preview',  inputCost:'$0.10', outputCost:'$0.40',  feature:'Gemini最新プレビュー。爆速で大量生成', speed:'爆速' },
