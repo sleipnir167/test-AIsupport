@@ -10,22 +10,24 @@ import { clsx } from 'clsx'
 interface SidebarProps {
   projectId: string
   projectName: string
+  showAiLogsTab?: boolean  // 管理者設定で制御（未指定時はtrue）
 }
 
-export default function ProjectSidebar({ projectId, projectName }: SidebarProps) {
+export default function ProjectSidebar({ projectId, projectName, showAiLogsTab = true }: SidebarProps) {
   const pathname = usePathname()
   const base = `/projects/${projectId}`
 
   const navItems = [
-    { href: base, label: 'プロジェクト概要', icon: FolderOpen, exact: true },
-    { href: `${base}/documents`, label: 'ドキュメント管理', icon: FileText },
-    { href: `${base}/url-analysis`, label: 'URL構造分析', icon: Globe },
-    { href: `${base}/source-code`, label: 'ソースコード取込', icon: Code2 },
-    { href: `${base}/generate`, label: 'AIテスト生成', icon: Sparkles },
-    { href: `${base}/test-items`, label: 'テスト項目書', icon: ClipboardList },
-    { href: `${base}/export`, label: 'Excel出力', icon: Download },
-    { href: `${base}/review`, label: 'AIレビュー・評価', icon: ShieldCheck },
-    { href: `${base}/ai-logs`, label: 'AIやり取りログ', icon: MessageSquare },
+    { href: base,                       label: 'プロジェクト概要',   icon: FolderOpen,  exact: true },
+    { href: `${base}/documents`,        label: 'ドキュメント管理',   icon: FileText },
+    { href: `${base}/url-analysis`,     label: 'URL構造分析',        icon: Globe },
+    { href: `${base}/source-code`,      label: 'ソースコード取込',   icon: Code2 },
+    { href: `${base}/generate`,         label: 'AIテスト生成',       icon: Sparkles },
+    { href: `${base}/test-items`,       label: 'テスト項目書',       icon: ClipboardList },
+    { href: `${base}/export`,           label: 'Excel出力',          icon: Download },
+    { href: `${base}/review`,           label: 'AIレビュー・評価',   icon: ShieldCheck },
+    // showAiLogsTab が false の場合は非表示
+    ...(showAiLogsTab ? [{ href: `${base}/ai-logs`, label: 'AIやり取りログ', icon: MessageSquare }] : []),
   ]
 
   return (
@@ -73,4 +75,3 @@ export default function ProjectSidebar({ projectId, projectName }: SidebarProps)
     </aside>
   )
 }
-

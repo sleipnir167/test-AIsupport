@@ -269,6 +269,13 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     fetch(`/api/generate/plan?projectId=${params.id}`).then(r=>r.json()).then(p=>{
       if(p?.id){setPlan(p);setStep('execute')}
     }).catch(()=>{})
+    // AdminSettings からデフォルトモデルを取得
+    fetch('/api/admin/public-settings').then(r=>r.json()).then((s:{
+      defaultPlanModelId?:string; defaultExecModelId?:string; labelGenerateButton?:string
+    })=>{
+      if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!MODEL_OPTIONS.find(m=>m.id===s.defaultPlanModelId)) }
+      if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!MODEL_OPTIONS.find(m=>m.id===s.defaultExecModelId)) }
+    }).catch(()=>{})
   },[params.id])
 
   const handlePhaseChange=(phase:TestPhase)=>{

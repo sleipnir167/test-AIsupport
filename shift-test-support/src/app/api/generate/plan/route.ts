@@ -216,6 +216,29 @@ export async function POST(req: Request) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     console.error('[plan] error:', message)
+    // エラー時もAIログに記録する（フロントで確認できるように）
+    try {
+      await saveAILog({
+        id: uuidv4(),
+        projectId,
+        projectName: (await getProject(projectId))?.name ?? projectId,
+        type: 'generation',
+        modelId: modelOverride || 'unknown',
+        modelLabel: modelOverride || 'unknown',
+        createdAt: new Date().toISOString(),
+        systemPrompt: '',
+        userPrompt: '',
+        responseText: '',
+        outputItemCount: 0,
+        aborted: false,
+        systemTokensEst: 0,
+        userTokensEst: 0,
+        responseTokensEst: 0,
+        totalTokensEst: 0,
+        elapsedMs: Date.now() - startedAt,
+        error: `[プランニングエラー] ${message}`,
+      })
+    } catch { /* ログ保存失敗は無視 */ }
     return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }

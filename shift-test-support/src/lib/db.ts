@@ -230,8 +230,20 @@ const DEFAULT_SETTINGS: AdminSettings = {
   reviewMaxTokens: 5000,
   logRetentionDays: 30,
   updatedAt: new Date().toISOString(),
+  // モデル初期値
+  defaultPlanModelId:   'deepseek/deepseek-v3.2',
+  defaultExecModelId:   'deepseek/deepseek-v3.2',
+  defaultReviewModelId: 'google/gemini-2.5-flash',
+  // 表示制御
+  showAiLogsTab:      true,
+  showAdvancedParams: false,
+  // UI文言
+  labelProjectName:   'プロジェクト名',
+  labelTargetSystem:  'テスト対象システム',
+  labelGenerateButton: 'AIテスト項目を生成する',
+  labelReviewButton:  'AIレビューを実行',
+  siteTitle:          'AI テスト支援システム',
 }
-
 export async function getAdminSettings(): Promise<AdminSettings> {
   const saved = await redis.get<AdminSettings>(LOG_KEY.settings)
   return saved ?? DEFAULT_SETTINGS

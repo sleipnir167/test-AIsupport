@@ -343,6 +343,31 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[review]', msg)
+    // エラー時もAIログに記録する
+    const projectId = (() => { try { return (new URL(req.url)).searchParams.get('projectId') ?? '' } catch { return '' } })()
+    try {
+      const { saveAILog: _saveLog } = await import('@/lib/db')
+      await _saveLog({
+        id: uuidv4(),
+        projectId,
+        projectName: projectId,
+        type: 'review',
+        modelId: 'unknown',
+        modelLabel: 'unknown',
+        createdAt: new Date().toISOString(),
+        systemPrompt: '',
+        userPrompt: '',
+        responseText: '',
+        outputItemCount: 0,
+        aborted: false,
+        systemTokensEst: 0,
+        userTokensEst: 0,
+        responseTokensEst: 0,
+        totalTokensEst: 0,
+        elapsedMs: 0,
+        error: `[レビューエラー] ${msg}`,
+      })
+    } catch { /* ログ保存失敗は無視 */ }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

@@ -321,6 +321,17 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
   const [approaches, setApproaches] = useState<Set<string>>(new Set(['リスクベースドテスト']))
 
   useEffect(() => {
+    // AdminSettings からデフォルトレビューモデルを取得（最優先）
+    fetch('/api/admin/public-settings').then(r => r.json()).then((s: {
+      defaultReviewModelId?: string
+    }) => {
+      if (s.defaultReviewModelId) {
+        const found = ALL_MODELS.find(m => m.id === s.defaultReviewModelId)
+        if (found) { setReviewModelId(found.id); setReviewUseCustom(false) }
+        else { setReviewUseCustom(true); setReviewCustomModel(s.defaultReviewModelId) }
+      }
+    }).catch(() => {})
+
     // 生成タブのメタを復元
     try {
       const saved = localStorage.getItem(`designMeta_${params.id}`)
@@ -329,11 +340,6 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
         setIndustry(meta.industry ?? 'SaaS')
         setSystemChars(new Set(meta.systemCharacteristics ?? []))
         setApproaches(new Set(meta.designApproaches ?? []))
-        // 生成タブで使ったモデルをデフォルトのレビューモデルとして設定
-        if (meta.modelId) {
-          const found = ALL_MODELS.find(m => m.id === meta.modelId)
-          if (found) { setReviewModelId(found.id); setReviewModelLabel(found.label) }
-        }
       }
     } catch {}
     // 前回レビュー結果

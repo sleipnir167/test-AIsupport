@@ -257,6 +257,22 @@ export interface AdminSettings {
   reviewMaxTokens: number         // レビューAI max_tokens
   logRetentionDays: number        // ログ保持日数
   updatedAt: string
+
+  // ─── モデル初期値 ─────────────────────────────────────────────
+  defaultPlanModelId: string       // プランニング用デフォルトモデルID
+  defaultExecModelId: string       // 実行用デフォルトモデルID
+  defaultReviewModelId: string     // レビュー用デフォルトモデルID
+
+  // ─── 表示制御 ─────────────────────────────────────────────────
+  showAiLogsTab: boolean           // AIやり取りログタブを表示するか
+  showAdvancedParams: boolean      // 詳細パラメータ（バッチサイズ・RAK等）を初期展開するか
+
+  // ─── UI文言カスタマイズ ───────────────────────────────────────
+  labelProjectName: string         // 「プロジェクト名」ラベル
+  labelTargetSystem: string        // 「テスト対象システム」ラベル
+  labelGenerateButton: string      // テスト生成ボタン文言
+  labelReviewButton: string        // レビューボタン文言
+  siteTitle: string                // アプリのサイトタイトル
 }
 
 // ─── テストプラン（プランニング結果） ───────────────────────────
