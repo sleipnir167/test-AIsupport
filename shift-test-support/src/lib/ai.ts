@@ -12,6 +12,7 @@ export interface GenerateOptions {
   perspectives?: string[]
   perspectiveWeights?: PerspectiveWeight[]
   targetPages?: Array<{ url: string; title: string }> | null
+  customSystemPrompt?: string
 }
 
 // refMapの型をエクスポート
