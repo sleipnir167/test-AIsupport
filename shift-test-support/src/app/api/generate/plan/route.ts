@@ -126,6 +126,8 @@ export async function POST(req: Request) {
         perspectives,
         perspectiveWeights,
         targetPages,
+        // プランニング専用プロンプトを優先。未設定ならバッチ用プロンプトにフォールバック
+        planningSystemPrompt: promptTemplate.planningSystemPrompt || undefined,
         customSystemPrompt: promptTemplate.systemPrompt,
         testPhase,
       }
@@ -187,6 +189,7 @@ export async function POST(req: Request) {
       projectId,
       projectName: project.name,
       type: 'generation',
+      logStage: 'planning',   // ★ プランニングフェーズとして記録
       modelId: model,
       modelLabel: model,
       createdAt: new Date().toISOString(),

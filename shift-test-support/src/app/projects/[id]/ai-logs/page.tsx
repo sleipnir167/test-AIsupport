@@ -16,10 +16,16 @@ function LogCard({ entry }: { entry: AILogEntry }) {
   const [open, setOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<'system' | 'user' | 'response'>('user')
 
-  const typeLabel = entry.type === 'generation' ? 'テスト生成' : entry.type === 'review' ? 'AIレビュー' : 'Excel比較'
-  const typeBg = entry.type === 'generation' ? 'bg-shift-100 text-shift-800 border-shift-200'
+  // logStage でプランニング / バッチ実行を区別して表示
+  const typeLabel = entry.type === 'generation'
+    ? (entry.logStage === 'planning' ? '📋 プランニング' : entry.logStage === 'batch' ? '⚡ バッチ実行' : 'テスト生成')
+    : entry.type === 'review' ? 'AIレビュー' : 'Excel比較'
+  const typeBg = entry.type === 'generation'
+    ? (entry.logStage === 'planning'
+        ? 'bg-blue-100 text-blue-800 border-blue-200'
+        : 'bg-shift-100 text-shift-800 border-shift-200')
     : entry.type === 'review' ? 'bg-purple-100 text-purple-800 border-purple-200'
-    : 'bg-blue-100 text-blue-800 border-blue-200'
+    : 'bg-indigo-100 text-indigo-800 border-indigo-200'
 
   const totalActual = entry.totalTokensActual
   const totalEst = entry.totalTokensEst
@@ -165,7 +171,7 @@ function LogCard({ entry }: { entry: AILogEntry }) {
 export default function AILogsPage({ params }: { params: { id: string } }) {
   const [logs, setLogs] = useState<AILogEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [filterType, setFilterType] = useState<'all' | 'generation' | 'review' | 'compare'>('all')
+  const [filterType, setFilterType] = useState<'all' | 'planning' | 'batch' | 'generation' | 'review' | 'compare'>('all')
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
 
@@ -179,7 +185,11 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
 
   const filtered = useMemo(() => {
     const list = logs.filter(l => {
-      if (filterType !== 'all' && l.type !== filterType) return false
+      if (filterType === 'planning' && !(l.type === 'generation' && l.logStage === 'planning')) return false
+      if (filterType === 'batch' && !(l.type === 'generation' && l.logStage === 'batch')) return false
+      if (filterType === 'generation' && l.type !== 'generation') return false
+      if (filterType === 'review' && l.type !== 'review') return false
+      if (filterType === 'compare' && l.type !== 'compare') return false
       if (search && !l.modelId.includes(search) && !(l.error ?? '').includes(search)) return false
       return true
     })
@@ -190,6 +200,8 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
     count: logs.length,
     totalTokens: logs.reduce((s, l) => s + (l.totalTokensActual ?? l.totalTokensEst), 0),
     totalItems: logs.filter(l => l.type === 'generation').reduce((s, l) => s + l.outputItemCount, 0),
+    planningCount: logs.filter(l => l.logStage === 'planning').length,
+    batchCount: logs.filter(l => l.logStage === 'batch').length,
     errors: logs.filter(l => !!l.error).length,
     avgMs: logs.length > 0 ? Math.round(logs.reduce((s, l) => s + l.elapsedMs, 0) / logs.length) : 0,
   }), [logs])
@@ -207,16 +219,18 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
         <p className="text-sm text-gray-500 mt-0.5">このプロジェクトのAIへの問い合わせ履歴・プロンプト・トークン使用量を確認できます</p>
       </div>
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-7 gap-3">
         {[
-          { label: 'やり取り数', value: `${stats.count}件`, color: 'text-gray-900' },
-          { label: '生成テスト項目', value: `${stats.totalItems}件`, color: 'text-shift-700' },
-          { label: '推定総トークン', value: fmtT(stats.totalTokens), color: 'text-blue-600' },
-          { label: '平均応答時間', value: fmtMs(stats.avgMs), color: 'text-green-600' },
-          { label: 'エラー数', value: `${stats.errors}件`, color: stats.errors > 0 ? 'text-red-600' : 'text-gray-400' },
+          { label: 'やり取り数',       value: `${stats.count}件`,         color: 'text-gray-900' },
+          { label: '📋 プランニング',   value: `${stats.planningCount}回`, color: 'text-blue-600' },
+          { label: '⚡ バッチ実行',     value: `${stats.batchCount}回`,    color: 'text-shift-700' },
+          { label: '生成テスト項目',   value: `${stats.totalItems}件`,     color: 'text-emerald-600' },
+          { label: '推定総トークン',   value: fmtT(stats.totalTokens),     color: 'text-purple-600' },
+          { label: '平均応答時間',     value: fmtMs(stats.avgMs),          color: 'text-green-600' },
+          { label: 'エラー数',         value: `${stats.errors}件`,         color: stats.errors > 0 ? 'text-red-600' : 'text-gray-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="card p-3 text-center">
-            <p className={clsx('text-xl font-bold', color)}>{value}</p>
+            <p className={clsx('text-lg font-bold', color)}>{value}</p>
             <p className="text-xs text-gray-500 mt-0.5">{label}</p>
           </div>
         ))}
@@ -228,8 +242,15 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
           <input type="text" placeholder="モデル名・エラーで絞り込み..."
             className="input pl-9 py-1.5" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
-          {([['all','すべて'],['generation','テスト生成'],['review','レビュー'],['compare','Excel比較']] as const).map(([v, l]) => (
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl flex-wrap">
+          {([
+            ['all',        'すべて'],
+            ['planning',   '📋 プランニング'],
+            ['batch',      '⚡ バッチ実行'],
+            ['generation', '生成（全）'],
+            ['review',     'レビュー'],
+            ['compare',    'Excel比較'],
+          ] as const).map(([v, l]) => (
             <button key={v} onClick={() => setFilterType(v)}
               className={clsx('px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
                 filterType === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>

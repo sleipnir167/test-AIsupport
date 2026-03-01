@@ -206,6 +206,8 @@ export interface AILogEntry {
   projectId: string
   projectName: string
   type: 'generation' | 'review' | 'compare'
+  /** generation の内訳: planning=プランニング、batch=バッチ実行 */
+  logStage?: 'planning' | 'batch'
   modelId: string
   modelLabel: string
   batchNum?: number
@@ -246,8 +248,9 @@ export interface PromptTemplate {
   id: string
   name: string
   description: string
-  systemPrompt: string      // 生成AI用システムプロンプト
-  reviewSystemPrompt: string  // レビューAI用システムプロンプト
+  planningSystemPrompt: string  // プランニング（LLM①）用システムプロンプト
+  systemPrompt: string          // バッチ実行（LLM②）用システムプロンプト
+  reviewSystemPrompt: string    // レビュー（LLM③）用システムプロンプト
   updatedAt: string
 }
 

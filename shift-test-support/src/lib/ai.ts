@@ -258,7 +258,8 @@ export interface PlanningOptions {
   perspectives?: string[]
   perspectiveWeights?: PerspectiveWeight[]
   targetPages?: Array<{ url: string; title: string }> | null
-  customSystemPrompt?: string
+  customSystemPrompt?: string          // バッチ実行兼用（後方互換）
+  planningSystemPrompt?: string        // プランニング専用上書き
   testPhase?: string  // テスト工程（単体テスト/結合テスト/システムテスト等）
 }
 
@@ -325,7 +326,8 @@ export function buildPlanningPrompts(
 
   const totalBatches = Math.ceil(totalItems / batchSize)
 
-  const systemPrompt = options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
+  // planningSystemPrompt を優先し、次に customSystemPrompt、最後にデフォルト
+  const systemPrompt = options.planningSystemPrompt || options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
 提供された仕様書・ソースコード・サイト構造を分析し、テスト項目の「全体プラン（目次）」をJSON配列形式のみで出力してください。
 説明文・マークダウン・コードブロックは一切含めないでください。`
 

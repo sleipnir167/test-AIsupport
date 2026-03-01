@@ -5,8 +5,7 @@ import {
   Eye, EyeOff, CheckCircle2, AlertTriangle, Sliders,
   TerminalSquare, ChevronDown, ChevronUp, Info, Shield,
   Monitor, MessageSquare, Type, ToggleLeft, ToggleRight,
-  Plus, Trash2, RefreshCw,
-  Edit3
+  Plus, Trash2, RefreshCw
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AdminSettings, PromptTemplate, CustomModelEntry } from '@/types'
@@ -35,7 +34,7 @@ const DEFAULT_SETTINGS: AdminSettings = {
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
   id: 'default', name: 'デフォルト', description: '',
-  systemPrompt: '', reviewSystemPrompt: '', updatedAt: '',
+  planningSystemPrompt: '', systemPrompt: '', reviewSystemPrompt: '', updatedAt: '',
 }
 
 // ─── 既定モデル一覧（選択肢） ──────────────────────────────────
@@ -63,12 +62,20 @@ type TabType = 'settings' | 'models' | 'modellist' | 'display' | 'labels' | 'pro
 
 // ─── ModelPickerコンポーネント ─────────────────────────────────
 function ModelPicker({
-  label, value, onChange, description
+  label, value, onChange, description, models: modelsProp
 }: {
-  label: string; value: string; onChange: (v: string) => void; description?: string
+  label: string; value: string; onChange: (v: string) => void
+  description?: string
+  /** カスタムモデルリスト。省略時は KNOWN_MODELS を使用 */
+  models?: Array<{ id: string; label: string }>
 }) {
-  const [customMode, setCustomMode] = useState(!KNOWN_MODELS.find(m => m.id === value))
-  const [customVal, setCustomVal] = useState(KNOWN_MODELS.find(m => m.id === value) ? '' : value)
+  const displayModels = (modelsProp && modelsProp.length > 0) ? modelsProp : KNOWN_MODELS
+  const [customMode, setCustomMode] = useState(!displayModels.find(m => m.id === value))
+  const [customVal, setCustomVal] = useState(displayModels.find(m => m.id === value) ? '' : value)
+
+  // value が変わったら customMode を再評価
+  const isKnown = displayModels.some(m => m.id === value)
+  const effectiveCustomMode = customMode && !isKnown || (!customMode && !isKnown && value !== '')
 
   const handleSelect = (id: string) => {
     setCustomMode(false)
@@ -84,12 +91,12 @@ function ModelPicker({
       <label className="text-xs text-gray-400 mb-2 block">{label}</label>
       {description && <p className="text-xs text-gray-600 mb-2">{description}</p>}
       <div className="space-y-1 mb-2">
-        {KNOWN_MODELS.map(m => (
+        {displayModels.map(m => (
           <label key={m.id} className={clsx(
             'flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors',
-            !customMode && value === m.id ? 'bg-shift-900 border border-shift-700' : 'hover:bg-gray-800'
+            !effectiveCustomMode && value === m.id ? 'bg-shift-900 border border-shift-700' : 'hover:bg-gray-800'
           )}>
-            <input type="radio" name={label} checked={!customMode && value === m.id}
+            <input type="radio" name={label} checked={!effectiveCustomMode && value === m.id}
               onChange={() => handleSelect(m.id)} className="accent-shift-500" />
             <span className="text-sm text-gray-200">{m.label}</span>
             <span className="text-xs text-gray-500 font-mono ml-auto">{m.id}</span>
@@ -97,9 +104,9 @@ function ModelPicker({
         ))}
         <label className={clsx(
           'flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors',
-          customMode ? 'bg-shift-900 border border-shift-700' : 'hover:bg-gray-800'
+          effectiveCustomMode ? 'bg-shift-900 border border-shift-700' : 'hover:bg-gray-800'
         )}>
-          <input type="radio" name={label} checked={customMode}
+          <input type="radio" name={label} checked={effectiveCustomMode}
             onChange={() => { setCustomMode(true); onChange(customVal) }} className="accent-shift-500" />
           <span className="text-sm text-gray-200 flex-shrink-0">任意のモデルIDを指定</span>
           <input
@@ -693,12 +700,22 @@ export default function AdminPage() {
               </div>
             </div>
 
+            {/* モデル一覧管理タブの内容が反映される旨を案内 */}
+            <div className="bg-gray-900/60 border border-gray-700 rounded-xl px-4 py-3 text-gray-400 text-xs flex items-start gap-2">
+              <span className="text-shift-400 font-mono mt-0.5">ℹ</span>
+              <span>
+                以下の選択肢は<strong className="text-gray-300">「モデル一覧管理」タブ</strong>で登録したモデルと連動します。
+                モデルを追加・削除した場合は再読み込みしてください。
+              </span>
+            </div>
+
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-8">
               <ModelPicker
                 label="① プランニング用デフォルトモデル"
                 description="generate ページ「プランニング用AIモデル」の初期選択。テスト設計方針の立案に使用します。"
                 value={settings.defaultPlanModelId}
                 onChange={v => setSettings(s => ({ ...s, defaultPlanModelId: v }))}
+                models={settings.customModelList ?? []}
               />
               <hr className="border-gray-800" />
               <ModelPicker
@@ -706,6 +723,7 @@ export default function AdminPage() {
                 description="generate ページ「実行用AIモデル」の初期選択。テスト項目詳細の生成に使用します。"
                 value={settings.defaultExecModelId}
                 onChange={v => setSettings(s => ({ ...s, defaultExecModelId: v }))}
+                models={settings.customModelList ?? []}
               />
               <hr className="border-gray-800" />
               <ModelPicker
@@ -713,6 +731,7 @@ export default function AdminPage() {
                 description="review ページ「レビューに使用するAIモデル」の初期選択。生成とは別モデルの使用を推奨します。"
                 value={settings.defaultReviewModelId}
                 onChange={v => setSettings(s => ({ ...s, defaultReviewModelId: v }))}
+                models={settings.customModelList ?? []}
               />
             </div>
 
@@ -850,17 +869,42 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* 生成用システムプロンプト */}
+            {/* ① プランニング用システムプロンプト */}
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="font-bold text-white flex items-center gap-2">
-                  <TerminalSquare className="w-4 h-4 text-shift-400" />テスト生成 システムプロンプト
+                  <TerminalSquare className="w-4 h-4 text-blue-400" />
+                  <span>① プランニング システムプロンプト</span>
+                  <span className="text-xs bg-blue-900/40 text-blue-300 border border-blue-700/50 px-2 py-0.5 rounded-full font-normal">LLM①</span>
+                </h2>
+                <span className="text-xs text-gray-500">{(template.planningSystemPrompt ?? '').length}文字 / 約{Math.ceil((template.planningSystemPrompt ?? '').length / 4)}トークン</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-2">
+                「テスト全体プランの立案」フェーズで使用。AIに「テスト設計のプランナーとして振る舞うか」を指示します。
+                <br />空欄の場合はシステムデフォルト（「プラン目次をJSONで出力してください」）が使われます。
+              </p>
+              <textarea
+                value={template.planningSystemPrompt ?? ''}
+                onChange={e => setTemplate(t => ({ ...t, planningSystemPrompt: e.target.value }))}
+                rows={8}
+                className="w-full bg-gray-800 border border-blue-900/40 rounded-xl px-4 py-3 text-sm text-gray-200 font-mono outline-none focus:border-blue-700 transition-colors resize-y"
+                placeholder={`（空欄 = デフォルト）\nあなたはソフトウェア品質保証の専門家です。提供された仕様書・ソースコード・サイト構造を分析し、テスト項目の「全体プラン（目次）」をJSON配列形式のみで出力してください。...`}
+              />
+            </div>
+
+            {/* ② バッチ実行用システムプロンプト */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-bold text-white flex items-center gap-2">
+                  <TerminalSquare className="w-4 h-4 text-shift-400" />
+                  <span>② バッチ実行 システムプロンプト</span>
+                  <span className="text-xs bg-shift-900/60 text-shift-300 border border-shift-700/50 px-2 py-0.5 rounded-full font-normal">LLM②</span>
                 </h2>
                 <span className="text-xs text-gray-500">{template.systemPrompt.length}文字 / 約{Math.ceil(template.systemPrompt.length / 4)}トークン</span>
               </div>
               <p className="text-xs text-gray-500 mb-2">
-                AIに「どんな専門家として振る舞うか」を指示するプロンプト。JSON出力の指示は必ず含めてください。
-                <br />※ プランニング（plan/route.ts）と各バッチ実行（batch/route.ts）の両方に適用されます。
+                「テスト項目の詳細生成」バッチ実行フェーズで使用。JSON出力の指示は必ず含めてください。
+                <br />空欄の場合はシステムデフォルトが使われます。
               </p>
               <textarea
                 value={template.systemPrompt}
@@ -871,11 +915,13 @@ export default function AdminPage() {
               />
             </div>
 
-            {/* レビュー用システムプロンプト */}
+            {/* ③ レビュー用システムプロンプト */}
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="font-bold text-white flex items-center gap-2">
-                  <Settings className="w-4 h-4 text-purple-400" />レビューAI システムプロンプト
+                  <Settings className="w-4 h-4 text-purple-400" />
+                  <span>③ レビューAI システムプロンプト</span>
+                  <span className="text-xs bg-purple-900/40 text-purple-300 border border-purple-700/50 px-2 py-0.5 rounded-full font-normal">LLM③</span>
                 </h2>
                 <span className="text-xs text-gray-500">{template.reviewSystemPrompt.length}文字 / 約{Math.ceil(template.reviewSystemPrompt.length / 4)}トークン</span>
               </div>

@@ -251,6 +251,7 @@ export async function POST(req: Request) {
       projectId,
       projectName: project.name,
       type: 'generation',
+      logStage: 'batch',   // ★ バッチ実行フェーズとして記録
       modelId: model,
       modelLabel: model,
       batchNum,
@@ -294,6 +295,7 @@ export async function POST(req: Request) {
       projectId,
       projectName: project.name,
       type: 'generation',
+      logStage: 'batch',
       modelId: modelOverride || 'unknown',
       modelLabel: modelOverride || 'unknown',
       batchNum,
