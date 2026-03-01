@@ -261,6 +261,7 @@ export interface AdminSettings {
 
 // ─── テストプラン（プランニング結果） ───────────────────────────
 export interface TestPlanBatch {
+  testPhase?: string        // テスト工程（単体テスト等）
   batchId: number
   category: string           // 大分類（例: ログイン・認証）
   perspective: string        // テスト観点（例: 境界値分析）
@@ -269,6 +270,7 @@ export interface TestPlanBatch {
 }
 
 export interface TestPlan {
+  testPhase?: string        // テスト工程
   id: string
   projectId: string
   status: 'draft' | 'approved' | 'executing' | 'completed'
@@ -283,4 +285,34 @@ export interface TestPlan {
   refMapCount?: number
   createdAt: string
   updatedAt: string
+}
+
+// ─── テスト工程 ────────────────────────────────────────────────
+export type TestPhase =
+  | '単体テスト'
+  | '結合テスト'
+  | 'システムテスト'
+  | '受入テスト'
+  | '回帰テスト'
+  | 'パフォーマンステスト'
+  | 'セキュリティテスト'
+
+export const TEST_PHASE_DESCRIPTIONS: Record<TestPhase, string> = {
+  '単体テスト':         '個々のモジュール・関数レベルの動作検証。入出力・境界値・例外処理を中心に検証する',
+  '結合テスト':         '複数モジュール間のインターフェース・データ連携・API呼び出しを検証する',
+  'システムテスト':     'システム全体のE2E機能検証。画面操作・業務フロー・エラーハンドリングを網羅する',
+  '受入テスト':         'ユーザー視点での業務要件適合性を検証。実際の業務シナリオ・ユーザビリティを確認する',
+  '回帰テスト':         '変更・修正による既存機能への影響を検証。リグレッション防止を目的とする',
+  'パフォーマンステスト': '応答時間・スループット・負荷耐性・メモリ使用量などを定量的に検証する',
+  'セキュリティテスト': 'OWASP Top10・認証・認可・暗号化・入力検証などセキュリティ要件を検証する',
+}
+
+export const TEST_PHASE_PERSPECTIVES: Record<TestPhase, string[]> = {
+  '単体テスト':         ['正常系', '異常系', '境界値'],
+  '結合テスト':         ['機能テスト', '正常系', '異常系', '境界値'],
+  'システムテスト':     ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性', '性能'],
+  '受入テスト':         ['機能テスト', '正常系', '操作性'],
+  '回帰テスト':         ['機能テスト', '正常系', '異常系'],
+  'パフォーマンステスト': ['性能'],
+  'セキュリティテスト': ['セキュリティ', '異常系'],
 }

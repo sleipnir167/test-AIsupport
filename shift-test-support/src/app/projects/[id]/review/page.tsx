@@ -10,17 +10,24 @@ import { clsx } from 'clsx'
 import type { ReviewResult, ExcelCompareResult, DesignMeta, CoverageScore, TestItem, PerspectiveHeatmapCell } from '@/types'
 
 // ─── 生成タブと同じモデルリスト ─────────────────────────────
-const ALL_MODELS = [
-  { id: 'deepseek/deepseek-v3.2',             label: 'DeepSeek V3.2',             note: '最安クラス・高速' },
-  { id: 'google/gemini-2.5-flash',            label: 'Gemini 2.5 Flash',           note: '高精度・推奨' },
-  { id: 'google/gemini-3-flash-preview',      label: 'Gemini 3 Flash Preview',     note: '最新Gemini' },
-  { id: 'openai/gpt-5-nano',                  label: 'GPT-5 Nano',                 note: '軽量・高速' },
-  { id: 'openai/gpt-5.2',                     label: 'GPT-5.2',                    note: '高精度分析' },
-  { id: 'anthropic/claude-sonnet-4.6',        label: 'Claude Sonnet 4.6',          note: '論理分析最強' },
-  { id: 'meta-llama/llama-3.3-70b-instruct',  label: 'Llama 3.3 70B',              note: 'OSS・コスパ良好' },
-  { id: 'deepseek/deepseek-r1-0528:free',     label: 'DeepSeek R1 (無料)',         note: '無料枠' },
-  { id: 'arcee-ai/trinity-large-preview:free', label: 'Arcee Trinity Large (無料)', note: '無料枠' },
+// ─── 生成タブと同じモデルリスト（ラジオボタン表示用） ──────────
+interface ReviewModelOption {
+  id: string; label: string; inputCost: string; outputCost: string
+  feature: string; speed: '爆速' | '高速' | '標準'; isDefault?: boolean; isFree?: boolean
+}
+const ALL_MODELS: ReviewModelOption[] = [
+  { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速', isDefault: true },
+  { id: 'google/gemini-2.5-flash',           label: 'Gemini 2.5 Flash',       inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',             speed: '爆速' },
+  { id: 'google/gemini-3-flash-preview',     label: 'Gemini 3 Flash Preview', inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成',   speed: '爆速' },
+  { id: 'openai/gpt-5-nano',                label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',        speed: '爆速' },
+  { id: 'openai/gpt-5.2',                   label: 'GPT-5.2',                inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' },
+  { id: 'anthropic/claude-sonnet-4.6',      label: 'Claude Sonnet 4.6',      inputCost: '$3.00', outputCost: '$15.00', feature: 'Anthropic最新。論理的な分析に最強',       speed: '標準' },
+  { id: 'meta-llama/llama-3.3-70b-instruct',label: 'Llama 3.3 70B',          inputCost: '$0.12', outputCost: '$0.30',  feature: 'Meta製OSS。コスパ良好',                  speed: '高速' },
+  { id: 'deepseek/deepseek-r1-0528:free',   label: 'DeepSeek R1 (free)',     inputCost: '無料',  outputCost: '無料',   feature: 'OpenRouterの無料枠。お試しに最適',       speed: '高速', isFree: true },
 ]
+const REVIEW_SPEED_COLOR: Record<string, string> = {
+  '爆速': 'text-green-600 bg-green-50', '高速': 'text-blue-600 bg-blue-50', '標準': 'text-gray-600 bg-gray-100',
+}
 
 // ─── 設計ポリシー定数 ────────────────────────────────────────
 const INDUSTRIES = [
@@ -297,6 +304,8 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
   const [tab, setTab] = useState<TabType>('review')
   const [reviewModelId, setReviewModelId] = useState(ALL_MODELS[0].id)
   const [reviewModelLabel, setReviewModelLabel] = useState(ALL_MODELS[0].label)
+  const [reviewUseCustom, setReviewUseCustom] = useState(false)
+  const [reviewCustomModel, setReviewCustomModel] = useState('')
   const [reviewSource, setReviewSource] = useState<'generated' | 'excel'>('generated')
   const [excelFile, setExcelFile] = useState<File | null>(null)
   const [compareFiles, setCompareFiles] = useState<File[]>([])
@@ -341,15 +350,19 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
 
   const selectModel = (id: string) => {
     setReviewModelId(id)
+    setReviewUseCustom(false)
     setReviewModelLabel(ALL_MODELS.find(m => m.id === id)?.label ?? id)
   }
+
+  const getReviewModelId = () => reviewUseCustom ? (reviewCustomModel.trim() || reviewModelId) : reviewModelId
+  const getReviewModelLabel = () => reviewUseCustom ? (reviewCustomModel.trim() || reviewModelId) : (ALL_MODELS.find(m => m.id === reviewModelId)?.label ?? reviewModelId)
 
   const buildLocalDesignMeta = (): DesignMeta => ({
     industry: industry as DesignMeta['industry'],
     systemCharacteristics: Array.from(systemChars) as DesignMeta['systemCharacteristics'],
     designApproaches: Array.from(approaches) as DesignMeta['designApproaches'],
-    modelId: reviewModelId,
-    modelLabel: reviewModelLabel,
+    modelId: getReviewModelId(),
+    modelLabel: getReviewModelLabel(),
     generatedAt: new Date().toISOString(),
     maxItems: generatedItems.length,
     batchSize: 50,
@@ -362,8 +375,8 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
     try {
       const fd = new FormData()
       fd.append('action', reviewSource === 'generated' ? 'review_generated' : 'review_excel')
-      fd.append('reviewModelId', reviewModelId)
-      fd.append('reviewModelLabel', reviewModelLabel)
+      fd.append('reviewModelId', getReviewModelId())
+      fd.append('reviewModelLabel', getReviewModelLabel())
       fd.append('projectId', params.id)
       fd.append('designMeta', JSON.stringify(buildLocalDesignMeta()))
       if (reviewSource === 'generated') {
@@ -387,8 +400,8 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
     try {
       const fd = new FormData()
       fd.append('action', 'compare_excel')
-      fd.append('reviewModelId', reviewModelId)
-      fd.append('reviewModelLabel', reviewModelLabel)
+      fd.append('reviewModelId', getReviewModelId())
+      fd.append('reviewModelLabel', getReviewModelLabel())
       fd.append('designMeta', JSON.stringify(buildLocalDesignMeta()))
       compareFiles.forEach((f, i) => fd.append(`file_${i}`, f))
       const res = await fetch('/api/review', { method: 'POST', body: fd })
@@ -460,20 +473,70 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
         )}
       </div>
 
-      {/* レビューモデル選択（生成タブと同じモデル） */}
-      <div className="card p-5">
-        <p className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-shift-700" />レビューに使用するAIモデル
-          <span className="text-xs font-normal text-gray-400">（生成に使ったモデルとは別を推奨。生成タブと同一モデルリスト）</span>
-        </p>
-        <div className="grid grid-cols-3 gap-2">
-          {ALL_MODELS.map(m => (
-            <button key={m.id} onClick={() => selectModel(m.id)}
-              className={clsx('p-3 rounded-xl border-2 text-left transition-all', reviewModelId === m.id ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300')}>
-              <p className={clsx('text-xs font-semibold', reviewModelId === m.id ? 'text-shift-800' : 'text-gray-700')}>{m.label}</p>
-              <p className="text-xs text-gray-400">{m.note}</p>
-            </button>
-          ))}
+      {/* レビューモデル選択（生成タブ・実行用AIモデルと同じ表示） */}
+      <div className="card">
+        <div className="p-4 border-b border-gray-100">
+          <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-shift-700" />レビューに使用するAIモデル
+          </p>
+          <p className="text-xs text-gray-400 mt-0.5">生成に使ったモデルとは別のモデルを推奨します（OpenRouter経由）</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gray-50 border-b border-gray-100">
+              <th className="w-8 px-3 py-2"></th>
+              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">モデル名</th>
+              <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">入力/1M</th>
+              <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">出力/1M</th>
+              <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">特徴</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {ALL_MODELS.map(m => (
+                <tr key={m.id} onClick={() => selectModel(m.id)}
+                  className={clsx('cursor-pointer transition-colors', !reviewUseCustom && reviewModelId === m.id ? 'bg-shift-50 border-l-2 border-l-shift-700' : 'hover:bg-gray-50 border-l-2 border-l-transparent')}>
+                  <td className="px-3 py-2.5 text-center">
+                    <input type="radio" checked={!reviewUseCustom && reviewModelId === m.id} onChange={() => selectModel(m.id)} className="accent-shift-700" />
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="font-medium text-gray-900">{m.label}</div>
+                    <div className="text-xs text-gray-400 font-mono">{m.id}</div>
+                  </td>
+                  <td className={clsx('px-3 py-2.5 text-right font-mono text-xs', m.isFree ? 'text-green-600 font-bold' : 'text-gray-600')}>{m.inputCost}</td>
+                  <td className={clsx('px-3 py-2.5 text-right font-mono text-xs', m.isFree ? 'text-green-600 font-bold' : 'text-gray-600')}>{m.outputCost}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-500 max-w-xs">{m.feature}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', REVIEW_SPEED_COLOR[m.speed])}>
+                      {m.speed === '爆速' && '⚡ '}{m.speed}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {/* カスタムモデル行 */}
+              <tr onClick={() => setReviewUseCustom(true)}
+                className={clsx('cursor-pointer transition-colors', reviewUseCustom ? 'bg-shift-50 border-l-2 border-l-shift-700' : 'hover:bg-gray-50 border-l-2 border-l-transparent')}>
+                <td className="px-3 py-2.5 text-center">
+                  <input type="radio" checked={reviewUseCustom} onChange={() => setReviewUseCustom(true)} className="accent-shift-700" />
+                </td>
+                <td className="px-3 py-2.5" colSpan={5}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-700 flex-shrink-0">任意のモデルを指定</span>
+                    <input
+                      type="text"
+                      placeholder="例: meta-llama/llama-3.1-70b-instruct"
+                      value={reviewCustomModel}
+                      onChange={e => { setReviewCustomModel(e.target.value); setReviewUseCustom(true) }}
+                      onClick={e => e.stopPropagation()}
+                      className="input py-1 text-xs font-mono flex-1"
+                    />
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
+          選択中: <span className="font-mono font-semibold">{reviewUseCustom ? reviewCustomModel || '（未入力）' : reviewModelId}</span>
         </div>
       </div>
 
@@ -561,6 +624,45 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
                 <div className="card p-5 border-l-4 border-l-shift-600">
                   <h2 className="font-bold text-gray-900 mb-3 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-shift-700" />テスト設計 総評</h2>
                   <p className="text-sm text-gray-700 leading-relaxed">{reviewResult.overallSummary}</p>
+                </div>
+              )}
+
+              {/* 仕様書との網羅性分析（RAGあり時のみ表示） */}
+              {reviewResult.specCoverageAnalysis && (
+                <div className="card p-5 border-l-4 border-l-green-500">
+                  <h2 className="font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    仕様書との網羅性分析
+                    <span className={`ml-auto text-sm font-bold px-3 py-1 rounded-full ${reviewResult.specCoverageAnalysis.coverageRate >= 0.8 ? 'bg-green-100 text-green-700' : reviewResult.specCoverageAnalysis.coverageRate >= 0.5 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                      網羅率 {Math.round(reviewResult.specCoverageAnalysis.coverageRate * 100)}%
+                    </span>
+                  </h2>
+                  <p className="text-xs text-gray-500 mb-4">アップロードされた仕様書と照合した結果です。件数の十分性も含めて評価しています。</p>
+                  <div className="bg-gray-50 rounded-xl p-4 mb-4">
+                    <p className="text-sm text-gray-700 leading-relaxed">{reviewResult.specCoverageAnalysis.coverageSummary}</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {reviewResult.specCoverageAnalysis.coveredFunctions.length > 0 && (
+                      <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                        <p className="text-xs font-semibold text-green-700 mb-2">✅ カバーできている機能・画面 ({reviewResult.specCoverageAnalysis.coveredFunctions.length}件)</p>
+                        <ul className="space-y-1">
+                          {reviewResult.specCoverageAnalysis.coveredFunctions.map((f, i) => (
+                            <li key={i} className="text-xs text-green-800">• {f}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {reviewResult.specCoverageAnalysis.uncoveredFunctions.length > 0 && (
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                        <p className="text-xs font-semibold text-red-700 mb-2">⚠️ テスト項目が不足・欠落している機能・画面 ({reviewResult.specCoverageAnalysis.uncoveredFunctions.length}件)</p>
+                        <ul className="space-y-1">
+                          {reviewResult.specCoverageAnalysis.uncoveredFunctions.map((f, i) => (
+                            <li key={i} className="text-xs text-red-800">• {f}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

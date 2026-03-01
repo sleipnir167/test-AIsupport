@@ -73,6 +73,7 @@ export async function POST(req: Request) {
     targetPages = null,
     modelOverride,
     ragTopK = { doc: 80, site: 30, src: 50 },
+    testPhase,
   }: {
     projectId: string
     totalItems: number
@@ -82,6 +83,7 @@ export async function POST(req: Request) {
     targetPages: Array<{ url: string; title: string }> | null
     modelOverride?: string
     ragTopK?: { doc: number; site: number; src: number }
+    testPhase?: string
   } = body
 
   if (!projectId) return NextResponse.json({ error: 'projectIdは必須です' }, { status: 400 })
@@ -125,6 +127,7 @@ export async function POST(req: Request) {
         perspectiveWeights,
         targetPages,
         customSystemPrompt: promptTemplate.systemPrompt,
+        testPhase,
       }
     )
 
@@ -165,6 +168,7 @@ export async function POST(req: Request) {
       totalItems,
       batchSize,
       batches,
+      testPhase,
       planModelId: model,
       planModelLabel: model,
       ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length },

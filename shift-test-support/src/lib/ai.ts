@@ -253,6 +253,7 @@ export interface PlanningOptions {
   perspectiveWeights?: PerspectiveWeight[]
   targetPages?: Array<{ url: string; title: string }> | null
   customSystemPrompt?: string
+  testPhase?: string  // テスト工程（単体テスト/結合テスト/システムテスト等）
 }
 
 export interface BuildPlanPromptsResult {
@@ -267,7 +268,7 @@ export function buildPlanningPrompts(
   chunks: VectorMetadata[],
   options: PlanningOptions
 ): BuildPlanPromptsResult {
-  const { totalItems, batchSize, perspectiveWeights, targetPages } = options
+  const { totalItems, batchSize, perspectiveWeights, targetPages, testPhase } = options
   const perspectives = options.perspectives || ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
@@ -322,11 +323,15 @@ export function buildPlanningPrompts(
 提供された仕様書・ソースコード・サイト構造を分析し、テスト項目の「全体プラン（目次）」をJSON配列形式のみで出力してください。
 説明文・マークダウン・コードブロックは一切含めないでください。`
 
+  const testPhaseInstruction = testPhase
+    ? `\nテスト工程: ${testPhase}（この工程に適した観点・粒度・フォーカスでプランを立案すること）`
+    : ''
+
   const userPrompt = `プロジェクト名: ${projectName}
 テスト対象システム: ${targetSystem}
 総生成件数: ${totalItems}件
 1バッチあたりの件数: ${batchSize}件
-バッチ総数: ${totalBatches}バッチ
+バッチ総数: ${totalBatches}バッチ${testPhaseInstruction}
 ${perspDistribution}
 ${pagesFocus}
 ${refMapSummary}
