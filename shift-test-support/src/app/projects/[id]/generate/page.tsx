@@ -242,7 +242,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [useExecCustom, setUseExecCustom] = useState(false)
   const [execRagTopK, setExecRagTopK] = useState({doc:100,site:40,src:100})
   // 管理者設定から取得したモデル一覧
-  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(DEFAULT_MODEL_OPTIONS)
+  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(MODEL_OPTIONS)
   // バッチごとのabort警告メッセージ
   const [abortWarnings, setAbortWarnings] = useState<string[]>([])
 
@@ -276,11 +276,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       defaultPlanModelId?:string; defaultExecModelId?:string; labelGenerateButton?:string
       customModelList?: CustomModelEntry[]; defaultBatchSize?: number
     })=>{
-      // モデルリストを管理者設定から上書き（空なら DEFAULT_MODEL_OPTIONS を維持）
+      // モデルリストを管理者設定から上書き（空なら MODEL_OPTIONS を維持）
       if(s.customModelList && s.customModelList.length > 0) setAdminModelList(s.customModelList)
       // バッチサイズ初期値を適用
       if(s.defaultBatchSize) setBatchSize(s.defaultBatchSize)
-      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : DEFAULT_MODEL_OPTIONS
+      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : MODEL_OPTIONS
       if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!modelList.find(m=>m.id===s.defaultPlanModelId)) }
       if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!modelList.find(m=>m.id===s.defaultExecModelId)) }
     }).catch(()=>{})
