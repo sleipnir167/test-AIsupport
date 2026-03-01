@@ -150,6 +150,14 @@ export interface PerspectiveHeatmapCell {
   recommendation: string    // 推奨コメント
 }
 
+// 仕様書との網羅性分析（RAGベース）
+export interface SpecCoverageAnalysis {
+  coveredFunctions: string[]     // カバーできている機能・画面
+  uncoveredFunctions: string[]   // 不足・欠落している機能・画面
+  coverageRate: number           // 0-1
+  coverageSummary: string        // 網羅性の総評（件数が十分かどうかも含む）
+}
+
 export interface ReviewResult {
   id: string
   projectId: string
@@ -161,6 +169,7 @@ export interface ReviewResult {
   coverageScore: CoverageScore
   scoreReason: string            // スコアを付けた根拠・説明
   overallSummary: string         // 総評
+  specCoverageAnalysis?: SpecCoverageAnalysis  // 仕様書との網羅性分析（RAGあり時のみ）
   missingPerspectives: string[]
   defectRiskAnalysis: string
   improvementSuggestions: string[]
@@ -247,5 +256,31 @@ export interface AdminSettings {
   defaultMaxTokens: number        // 生成AI max_tokens
   reviewMaxTokens: number         // レビューAI max_tokens
   logRetentionDays: number        // ログ保持日数
+  updatedAt: string
+}
+
+// ─── テストプラン（プランニング結果） ───────────────────────────
+export interface TestPlanBatch {
+  batchId: number
+  category: string           // 大分類（例: ログイン・認証）
+  perspective: string        // テスト観点（例: 境界値分析）
+  titles: string[]           // テストタイトル一覧（例: 50件）
+  count: number              // このバッチの件数
+}
+
+export interface TestPlan {
+  id: string
+  projectId: string
+  status: 'draft' | 'approved' | 'executing' | 'completed'
+  totalItems: number
+  batchSize: number
+  batches: TestPlanBatch[]
+  planModelId: string
+  planModelLabel: string
+  execModelId?: string
+  execModelLabel?: string
+  ragBreakdown?: { doc: number; site: number; src: number }
+  refMapCount?: number
+  createdAt: string
   updatedAt: string
 }

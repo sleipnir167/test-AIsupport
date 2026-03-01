@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import type { TestItem, DesignMeta, ReviewResult, ExcelCompareResult, CoverageScore, PerspectiveHeatmapCell } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 import { saveAILog, getPromptTemplate, getAdminSettings, getProject } from '@/lib/db'
+import { searchChunks } from '@/lib/vector'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -60,6 +61,27 @@ async function runSingleReview(
   const { client, model } = createClient(reviewModelId)
   const [adminSettings, promptTemplate, project] = await Promise.all([getAdminSettings(), getPromptTemplate(), getProject(projectId)])
 
+  // ── RAG: 仕様書をレビューコンテキストに含める ────────────────
+  const ragQuery = `${project?.targetSystem ?? ''} 仕様 要件 機能 テスト観点 画面`
+  const [docChunks, siteChunks] = await Promise.all([
+    searchChunks(ragQuery, projectId, 40),
+    searchChunks(ragQuery, projectId, 15, 'site_analysis'),
+  ])
+
+  const buildRagContext = (list: typeof docChunks, label: string, maxLen: number) => {
+    if (!list.length) return ''
+    const text = list.map((c, i) => `[REF-${i + 1}: ${c.filename}]\n${c.text}`).join('\n\n')
+    return `\n\n## ${label}\n${text.slice(0, maxLen)}`
+  }
+  const ragContext = [
+    buildRagContext(docChunks, '仕様・要件ドキュメント', 25000),
+    buildRagContext(siteChunks, 'サイト構造・画面情報', 6000),
+  ].join('')
+
+  const specFunctionHints = docChunks.length > 0
+    ? `\n\n【仕様書から抽出した主要機能・画面（網羅性評価に使用）】\n${docChunks.slice(0, 20).map(c => `- ${c.filename}: ${c.text.slice(0, 100)}`).join('\n')}`
+    : ''
+
   const metaContext = designMeta ? `\n【テスト設計メタ情報】\n- 対象業界: ${designMeta.industry}\n- システム特性: ${designMeta.systemCharacteristics.join('、')}\n- 設計アプローチ: ${designMeta.designApproaches.join('、')}\n- 使用モデル: ${designMeta.modelLabel}\n- 生成件数: ${designMeta.maxItems}件\n- テスト観点: ${designMeta.perspectives.join('、')}\n` : ''
 
   const perspCountMap: Record<string, number> = {}
@@ -71,33 +93,41 @@ async function runSingleReview(
   // カスタムプロンプト対応
   const systemPrompt = promptTemplate.reviewSystemPrompt
 
-  const userPrompt = `以下のテスト設計を第三者評価してください。
+  const userPrompt = `以下のテスト設計を、仕様書との照合を含めて第三者評価してください。
 ${metaContext}
 【テスト項目概要】
 総件数: ${items.length}件 / カテゴリ: ${majors.join('、')} / 観点別: ${perspBreakdown}
 
 【テスト項目リスト（先頭150件）】
 ${itemsSummary}
+${specFunctionHints}
 
 以下の形式でJSONのみ出力（コードブロック不要）:
 {
   "coverageScore": { "iso25010": 0-1, "iso29119": 0-1, "owasp": 0-1, "istqb": 0-1 },
   "scoreReason": "各スコアの根拠（300文字以内）",
-  "overallSummary": "総評（400文字以内）。強み・弱み・業界適合度を含む",
+  "overallSummary": "総評（400文字以内）。強み・弱み・業界適合度・仕様書との網羅性を含む",
+  "specCoverageAnalysis": {
+    "coveredFunctions": ["仕様書に記載があり、テスト項目でカバーできている機能・画面"],
+    "uncoveredFunctions": ["仕様書に記載があるが、テスト項目が不足または欠落している機能・画面"],
+    "coverageRate": 0.0,
+    "coverageSummary": "網羅性の総評（200文字以内）。件数が十分かどうかも判断"
+  },
   "missingPerspectives": ["【観点名】欠落内容と影響の説明（具体例付き）"],
   "defectRiskAnalysis": "欠陥混入リスク分析（300文字以内）",
   "improvementSuggestions": ["【タイトル】実装可能な粒度の具体的改善内容"],
   "heatmap": [{ "category": "名前", "riskLevel": "critical|high|medium|low", "score": 0-1, "reason": "理由" }],
   "coverageMissingAreas": [{
     "area": "領域名", "severity": "critical|high|medium",
-    "description": "不足内容の具体的説明",
+    "description": "不足内容の具体的説明（仕様書の記載と照合した結果を含む）",
     "suggestedTests": ["具体的なテストケース例（そのまま使えるレベルで）"],
     "relatedStandard": "ISO25010|ISO29119|OWASP|ISTQB"
   }]
 }
 
 スコア基準: iso25010×0.3=品質特性, iso29119×0.3=テスト標準, owasp×0.2=セキュリティ(${designMeta?.systemCharacteristics?.includes('セキュリティ重要') ? '特に重視' : '標準'}), istqb×0.2=テスト技法
-業界: ${designMeta?.industry ?? '不明'} / 特性: ${designMeta?.systemCharacteristics?.join('、') ?? '不明'}`
+業界: ${designMeta?.industry ?? '不明'} / 特性: ${designMeta?.systemCharacteristics?.join('、') ?? '不明'}
+【参照仕様書（網羅性評価に使用）】${ragContext || '※仕様書なし。テスト項目のみで評価。'}`
 
   const res = await client.chat.completions.create({
     model,
@@ -153,6 +183,12 @@ ${itemsSummary}
     },
     scoreReason: parsed.scoreReason ?? '',
     overallSummary: parsed.overallSummary ?? '',
+    specCoverageAnalysis: parsed.specCoverageAnalysis ? {
+      coveredFunctions: parsed.specCoverageAnalysis.coveredFunctions ?? [],
+      uncoveredFunctions: parsed.specCoverageAnalysis.uncoveredFunctions ?? [],
+      coverageRate: parsed.specCoverageAnalysis.coverageRate ?? 0,
+      coverageSummary: parsed.specCoverageAnalysis.coverageSummary ?? '',
+    } : undefined,
     missingPerspectives: parsed.missingPerspectives ?? [],
     defectRiskAnalysis: parsed.defectRiskAnalysis ?? '',
     improvementSuggestions: parsed.improvementSuggestions ?? [],

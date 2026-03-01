@@ -243,3 +243,221 @@ export function parseTestItems(
     }
   })
 }
+
+// ─── プランニング用プロンプト ────────────────────────────────────
+
+export interface PlanningOptions {
+  totalItems: number
+  batchSize: number
+  perspectives?: string[]
+  perspectiveWeights?: PerspectiveWeight[]
+  targetPages?: Array<{ url: string; title: string }> | null
+  customSystemPrompt?: string
+}
+
+export interface BuildPlanPromptsResult {
+  systemPrompt: string
+  userPrompt: string
+  refMap: RefMapEntry[]
+}
+
+export function buildPlanningPrompts(
+  projectName: string,
+  targetSystem: string,
+  chunks: VectorMetadata[],
+  options: PlanningOptions
+): BuildPlanPromptsResult {
+  const { totalItems, batchSize, perspectiveWeights, targetPages } = options
+  const perspectives = options.perspectives || ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']
+
+  const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
+  const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
+  const sourceChunks = chunks.filter(c => c.category === 'source_code')
+
+  const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
+  const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
+    refId: `REF-${i + 1}`,
+    filename: c.filename,
+    category: c.category,
+    excerpt: c.text.slice(0, 250),
+    pageUrl: c.pageUrl,
+  }))
+
+  const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
+    if (!list.length) return ''
+    const text = list
+      .map((c, i) => `[REF-${offset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
+      .join('\n\n')
+    return `\n\n## ${label}\n${text.slice(0, maxLen)}`
+  }
+
+  const contextText = [
+    buildContext(docChunks,    '仕様・要件ドキュメント', 60000, 0),
+    buildContext(siteChunks,   'サイト構造・画面情報',   15000, docChunks.length),
+    buildContext(sourceChunks, 'ソースコード',            30000, docChunks.length + siteChunks.length),
+  ].join('')
+
+  const pagesFocus = targetPages?.length
+    ? `\n\n## テスト対象画面\n${targetPages.map(p => `- ${p.title} (${p.url})`).join('\n')}`
+    : ''
+
+  const refMapSummary = refMap.length > 0
+    ? `\n\n## 参照資料一覧\n` + refMap.map(r => `${r.refId}: [${r.category}] ${r.filename}${r.pageUrl ? ' (' + r.pageUrl + ')' : ''}`).join('\n')
+    : ''
+
+  // 観点配分の指示を構築
+  let perspDistribution: string
+  if (perspectiveWeights && perspectiveWeights.length > 0) {
+    const active = perspectiveWeights.filter(w => w.count > 0)
+    const total = active.reduce((s, w) => s + w.count, 0)
+    perspDistribution = `テスト観点と全体件数配分（合計${total}件）:\n` +
+      active.map(w => `  - ${w.value}: ${w.count}件（${Math.round(w.count / total * 100)}%）`).join('\n')
+  } else {
+    perspDistribution = `テスト観点（均等配分）: ${perspectives.join('、')}`
+  }
+
+  const totalBatches = Math.ceil(totalItems / batchSize)
+
+  const systemPrompt = options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
+提供された仕様書・ソースコード・サイト構造を分析し、テスト項目の「全体プラン（目次）」をJSON配列形式のみで出力してください。
+説明文・マークダウン・コードブロックは一切含めないでください。`
+
+  const userPrompt = `プロジェクト名: ${projectName}
+テスト対象システム: ${targetSystem}
+総生成件数: ${totalItems}件
+1バッチあたりの件数: ${batchSize}件
+バッチ総数: ${totalBatches}バッチ
+${perspDistribution}
+${pagesFocus}
+${refMapSummary}
+
+【重要な設計方針】
+1. RAG参照: 上記の仕様書・参照資料を分析し、各機能・画面のボリュームに比例して件数を割り振ること
+2. 網羅性: 正常系だけでなく、境界値・異常系・セキュリティ・操作性などの観点を指定された重みに基づき配分すること
+3. 具体性: testTitleはタイトルだけで「何をテストするか」が一意に判別できるユニークな名称にすること
+   良い例: 「パスワード入力欄に256文字以上の文字列を入力した場合のバリデーションエラー表示」
+   悪い例: 「パスワードの境界値テスト」「異常系テスト」
+4. 重複なし: 全${totalItems}件のtitleはプロジェクト全体で重複しないこと
+5. 件数厳守: 全バッチのtitles配列の合計が必ず${totalItems}件になること
+
+【参考資料（RAG検索結果）】${contextText || '\n※ 参考資料なし。一般的なWebシステムとして設計してください。'}
+
+以下のJSON配列形式のみで出力してください（他のテキストは絶対に含めないでください）:
+
+[
+  {
+    "batchId": 1,
+    "category": "大分類（例: ログイン・認証）",
+    "perspective": "テスト観点（例: 正常系、境界値分析、セキュリティ）",
+    "titles": [
+      "具体的なテストタイトル1（何をテストするか明確に）",
+      "具体的なテストタイトル2",
+      ...（このバッチの件数ぴったり）
+    ],
+    "count": バッチ内の件数
+  },
+  ...（計${totalBatches}バッチ）
+]`
+
+  return { systemPrompt, userPrompt, refMap }
+}
+
+// ─── バッチ実行用プロンプト（プランのバッチ1件を詳細化） ──────────
+
+export interface BatchFromPlanOptions {
+  batchId: number
+  totalBatches: number
+  category: string
+  perspective: string
+  titles: string[]
+  customSystemPrompt?: string
+}
+
+export function buildBatchFromPlanPrompts(
+  projectName: string,
+  targetSystem: string,
+  chunks: VectorMetadata[],
+  options: BatchFromPlanOptions
+): BuildPromptsResult {
+  const { batchId, totalBatches, category, perspective, titles } = options
+
+  const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
+  const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
+  const sourceChunks = chunks.filter(c => c.category === 'source_code')
+
+  const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
+  const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
+    refId: `REF-${i + 1}`,
+    filename: c.filename,
+    category: c.category,
+    excerpt: c.text.slice(0, 250),
+    pageUrl: c.pageUrl,
+  }))
+
+  const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
+    if (!list.length) return ''
+    const text = list
+      .map((c, i) => `[REF-${offset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
+      .join('\n\n')
+    return `\n\n## ${label}\n${text.slice(0, maxLen)}`
+  }
+
+  const contextText = [
+    buildContext(docChunks,    '仕様・要件ドキュメント', 50000, 0),
+    buildContext(siteChunks,   'サイト構造・画面情報',   12000, docChunks.length),
+    buildContext(sourceChunks, 'ソースコード',            30000, docChunks.length + siteChunks.length),
+  ].join('')
+
+  const refMapSummary = refMap.length > 0
+    ? `\n\n## 参照資料一覧\n` + refMap.map(r => `${r.refId}: [${r.category}] ${r.filename}${r.pageUrl ? ' (' + r.pageUrl + ')' : ''}`).join('\n')
+    : ''
+
+  const titleList = titles.map((t, i) => `${i + 1}. ${t}`).join('\n')
+
+  const systemPrompt = options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
+提供されたテストタイトルリストに対して、仕様書を参照しながら各テスト項目の詳細（手順・期待結果・事前条件など）を日本語で作成してください。
+必ずJSON配列のみで回答し、マークダウンのコードブロックや説明文は一切含めないでください。
+件数は必ず指定された数を出力してください。`
+
+  const userPrompt = `プロジェクト名: ${projectName}
+テスト対象システム: ${targetSystem}
+バッチ: ${batchId}/${totalBatches}
+大分類: ${category}
+テスト観点: ${perspective}
+【重要】以下の${titles.length}件のタイトルに対して、それぞれの詳細を設計してください。タイトルは変更不可。
+${refMapSummary}
+
+【生成対象タイトル一覧（${titles.length}件）】
+${titleList}
+
+【参考資料（RAG検索結果）】${contextText || '\n※ 参考資料なし。一般的なWebシステムとして設計してください。'}
+
+以下のJSON配列形式のみで出力してください（${titles.length}件ちょうど）:
+
+[
+  {
+    "categoryMajor": "${category}",
+    "categoryMinor": "中分類（サブ機能・フロー）",
+    "testPerspective": "${perspective}（機能テスト/正常系/異常系/境界値/セキュリティ/操作性/性能のいずれか）",
+    "testTitle": "上記タイトルリストから対応するもの（変更不可）",
+    "precondition": "事前条件",
+    "steps": ["手順1", "手順2", "手順3"],
+    "expectedResult": "期待結果（具体的に）",
+    "priority": "HIGH または MEDIUM または LOW",
+    "automatable": "YES または NO または CONSIDER",
+    "sourceRefs": [
+      {
+        "refId": "REF-1",
+        "reason": "このテスト項目を導出した根拠（50文字以内）"
+      }
+    ]
+  }
+]
+
+【sourceRefsの記載ルール】
+- 参照資料一覧のREF番号を使用
+- 各テスト項目の根拠となった参照資料を1〜3件記載
+- 参照資料が存在しない場合のみ空配列[]`
+
+  return { systemPrompt, userPrompt, refMap }
+}

@@ -2,494 +2,319 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Sparkles, CheckCircle2, AlertCircle, Settings,
+  CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
-  LayoutGrid, List, Bug, Copy, CheckCheck, AlertTriangle, Zap, ShieldCheck
+  ClipboardList, Play, Edit3, Trash2, Plus, ChevronRight, RotateCcw, AlertTriangle
 } from 'lucide-react'
-import type { SiteAnalysis, PageInfo } from '@/types'
-
-const STAGES = [
-  'RAG検索中（関連ドキュメント・サイト構造・ソースコードを取得）',
-  'プロンプト構築中',
-  'AI生成中...',
-  'テスト項目を解析・保存中',
-  '完了',
-]
-const STAGE_PROGRESS = [10, 22, 88, 97, 100]
+import type { SiteAnalysis, TestPlan, TestPlanBatch } from '@/types'
 
 const PERSPECTIVE_OPTIONS = [
-  { label: '機能テスト',   value: '機能テスト' },
-  { label: '正常系',       value: '正常系' },
-  { label: '異常系',       value: '異常系' },
-  { label: '境界値',       value: '境界値' },
+  { label: '機能テスト', value: '機能テスト' },
+  { label: '正常系',     value: '正常系' },
+  { label: '異常系',     value: '異常系' },
+  { label: '境界値',     value: '境界値' },
   { label: 'セキュリティ', value: 'セキュリティ' },
-  { label: '操作性',       value: '操作性' },
-  { label: '性能',         value: '性能' },
+  { label: '操作性',     value: '操作性' },
+  { label: '性能',       value: '性能' },
 ]
 
 interface ModelOption {
-  id: string
-  label: string
-  inputCost: string
-  outputCost: string
-  feature: string
-  speed: '爆速' | '高速' | '標準'
-  isDefault?: boolean
-  isFree?: boolean
+  id: string; label: string; inputCost: string; outputCost: string
+  feature: string; speed: '爆速' | '高速' | '標準'; isDefault?: boolean; isFree?: boolean
 }
-
 const MODEL_OPTIONS: ModelOption[] = [
-  {
-    id: 'deepseek/deepseek-v3.2',
-    label: 'DeepSeek V3.2',
-    inputCost: '$0.20',
-    outputCost: '$0.35',
-    feature: '最安クラス。出力量が多いならこれ一択',
-    speed: '高速',
-    isDefault: true,
-  },
-  {
-    id: 'google/gemini-2.5-flash',
-    label: 'Gemini 2.5 Flash',
-    inputCost: '$0.15',
-    outputCost: '$0.60',
-    feature: '最新Gemini。高精度かつ爆速',
-    speed: '爆速',
-  },
-  {
-    id: 'google/gemini-3-flash-preview',
-    label: 'Gemini 3 Flash Preview',
-    inputCost: '$0.10',
-    outputCost: '$0.40',
-    feature: 'Gemini最新プレビュー。爆速で大量生成可能',
-    speed: '爆速',
-  },
-  {
-    id: 'openai/gpt-5-nano',
-    label: 'GPT-5 Nano',
-    inputCost: '$0.05',
-    outputCost: '$0.20',
-    feature: '最も安価なGPT。軽量タスクに最適',
-    speed: '爆速',
-  },
-  {
-    id: 'openai/gpt-5.2',
-    label: 'GPT-5.2',
-    inputCost: '$1.75',
-    outputCost: '$14.00',
-    feature: '非常に高精度。複雑なロジックの網羅に強い',
-    speed: '標準',
-  },
-  {
-    id: 'anthropic/claude-sonnet-4.6',
-    label: 'Claude Sonnet 4.6',
-    inputCost: '$3.00',
-    outputCost: '$15.00',
-    feature: 'Anthropic最新。論理的な分析に最強',
-    speed: '標準',
-  },
-  {
-    id: 'meta-llama/llama-3.3-70b-instruct',
-    label: 'Llama 3.3 70B',
-    inputCost: '$0.12',
-    outputCost: '$0.30',
-    feature: 'Meta製OSS。コスパ良好',
-    speed: '高速',
-  },
-  {
-    id: 'deepseek/deepseek-r1-0528:free',
-    label: 'DeepSeek R1 0528 (free)',
-    inputCost: '無料',
-    outputCost: '無料',
-    feature: 'OpenRouterの無料枠。お試しに最適',
-    speed: '高速',
-    isFree: true,
-  },
-  {
-    id: 'arcee-ai/trinity-large-preview:free',
-    label: 'Arcee Trinity Large (free)',
-    inputCost: '無料',
-    outputCost: '無料',
-    feature: 'Arcee AI製の無料プレビューモデル',
-    speed: '高速',
-    isFree: true,
-  },
+  { id: 'deepseek/deepseek-v3.2',           label: 'DeepSeek V3.2',          inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',  speed: '高速', isDefault: true },
+  { id: 'google/gemini-2.5-flash',          label: 'Gemini 2.5 Flash',        inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',          speed: '爆速' },
+  { id: 'google/gemini-3-flash-preview',    label: 'Gemini 3 Flash Preview',  inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成', speed: '爆速' },
+  { id: 'openai/gpt-5-nano',               label: 'GPT-5 Nano',              inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',     speed: '爆速' },
+  { id: 'openai/gpt-5.2',                  label: 'GPT-5.2',                 inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' },
+  { id: 'anthropic/claude-sonnet-4.6',     label: 'Claude Sonnet 4.6',       inputCost: '$3.00', outputCost: '$15.00', feature: 'Anthropic最新。論理的な分析に最強',    speed: '標準' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B',        inputCost: '$0.12', outputCost: '$0.30',  feature: 'Meta製OSS。コスパ良好',               speed: '高速' },
+  { id: 'deepseek/deepseek-r1-0528:free',  label: 'DeepSeek R1 (free)',      inputCost: '無料',  outputCost: '無料',   feature: 'OpenRouterの無料枠。お試しに最適',    speed: '高速', isFree: true },
 ]
+const SPEED_COLOR: Record<string, string> = { '爆速': 'text-green-600 bg-green-50', '高速': 'text-blue-600 bg-blue-50', '標準': 'text-gray-600 bg-gray-100' }
 
-const SPEED_COLOR: Record<string, string> = {
-  '爆速': 'text-green-600 bg-green-50',
-  '高速': 'text-blue-600 bg-blue-50',
-  '標準': 'text-gray-600 bg-gray-100',
-}
-
-interface JobDebug {
-  status: string
-  stage: number
-  message: string
-  error?: string
-  debugError?: string
-  debugPrompt?: { system: string; user: string; totalChunks: number }
-  model?: string
-  count?: number
-  isPartial?: boolean
-  elapsed?: number
-  updatedAt?: string
-  breakdown?: { documents: number; siteAnalysis: number; sourceCode: number }
-}
-
-// ─── ツールチップ付きポリシーボタン ──────────────────────────
-function PolicyTipButton({ value, tip, active, onClick, activeClass, inactiveClass }: {
-  value: string; tip: string; active: boolean; onClick: () => void
-  activeClass: string; inactiveClass: string
+function ModelSelector({ selectedId, customModel, useCustom, onSelect, onCustomChange, onUseCustom, label }: {
+  selectedId: string; customModel: string; useCustom: boolean
+  onSelect: (id: string) => void; onCustomChange: (v: string) => void; onUseCustom: () => void; label: string
 }) {
-  const [show, setShow] = useState(false)
   return (
-    <div className="relative">
-      <button
-        onClick={onClick}
-        onMouseEnter={() => setShow(true)}
-        onMouseLeave={() => setShow(false)}
-        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${active ? activeClass : inactiveClass}`}>
-        {active ? '✓ ' : ''}{value}
-      </button>
-      {show && (
-        <div className="absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-gray-900 text-white text-xs rounded-xl p-3 shadow-xl pointer-events-none leading-relaxed whitespace-normal">
-          {tip}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+    <div className="card">
+      <div className="p-4 border-b border-gray-100">
+        <p className="text-sm font-semibold text-gray-900">{label}</p>
+        <p className="text-xs text-gray-400 mt-0.5">OpenRouter経由で呼び出します（OPENROUTER_API_KEY）</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-gray-50 border-b border-gray-100">
+            <th className="w-8 px-3 py-2"></th>
+            <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">モデル名</th>
+            <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">入力/1M</th>
+            <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">出力/1M</th>
+            <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">特徴</th>
+            <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-50">
+            {MODEL_OPTIONS.map(m => (
+              <tr key={m.id} onClick={() => onSelect(m.id)}
+                className={`cursor-pointer transition-colors ${!useCustom && selectedId === m.id ? 'bg-shift-50 border-l-2 border-l-shift-700' : 'hover:bg-gray-50 border-l-2 border-l-transparent'}`}>
+                <td className="px-3 py-2.5 text-center"><input type="radio" checked={!useCustom && selectedId === m.id} onChange={() => onSelect(m.id)} className="accent-shift-700" /></td>
+                <td className="px-3 py-2.5"><div className="font-medium text-gray-900">{m.label}</div><div className="text-xs text-gray-400 font-mono">{m.id}</div></td>
+                <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>{m.inputCost}</td>
+                <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>{m.outputCost}</td>
+                <td className="px-3 py-2.5 text-xs text-gray-500 max-w-xs">{m.feature}</td>
+                <td className="px-3 py-2.5 text-center"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SPEED_COLOR[m.speed]}`}>{m.speed === '爆速' && '⚡ '}{m.speed}</span></td>
+              </tr>
+            ))}
+            <tr onClick={onUseCustom} className={`cursor-pointer transition-colors ${useCustom ? 'bg-shift-50 border-l-2 border-l-shift-700' : 'hover:bg-gray-50 border-l-2 border-l-transparent'}`}>
+              <td className="px-3 py-2.5 text-center"><input type="radio" checked={useCustom} onChange={onUseCustom} className="accent-shift-700" /></td>
+              <td className="px-3 py-2.5" colSpan={5}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700 flex-shrink-0">任意のモデルを指定</span>
+                  <input type="text" placeholder="例: meta-llama/llama-3.1-70b-instruct" value={customModel}
+                    onChange={e => { onCustomChange(e.target.value); onUseCustom() }}
+                    onClick={e => e.stopPropagation()} className="input py-1 text-xs font-mono flex-1" />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
+        選択中: <span className="font-mono font-semibold">{useCustom ? customModel || '（未入力）' : selectedId}</span>
+      </div>
+    </div>
+  )
+}
+
+function PlanEditor({ plan, onSave, onClose }: { plan: TestPlan; onSave: (updated: TestPlan) => void; onClose: () => void }) {
+  const [batches, setBatches] = useState<TestPlanBatch[]>(plan.batches.map(b => ({ ...b, titles: [...b.titles] })))
+  const [openBatch, setOpenBatch] = useState<number | null>(0)
+  const [editingTitle, setEditingTitle] = useState<{ batchIdx: number; titleIdx: number } | null>(null)
+  const [titleInput, setTitleInput] = useState('')
+  const totalTitles = batches.reduce((s, b) => s + b.titles.length, 0)
+
+  const saveTitle = () => {
+    if (!editingTitle) return
+    setBatches(prev => prev.map((b, i) => i === editingTitle.batchIdx ? { ...b, titles: b.titles.map((t, j) => j === editingTitle.titleIdx ? titleInput : t) } : b))
+    setEditingTitle(null)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto py-8">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4">
+        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">テストプランの編集</h2>
+            <p className="text-sm text-gray-500 mt-0.5">合計 <strong>{totalTitles}</strong> 件 / {batches.length} バッチ</p>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="btn-secondary">キャンセル</button>
+            <button onClick={() => onSave({ ...plan, batches: batches.map(b => ({ ...b, count: b.titles.length })), totalItems: totalTitles })} className="btn-primary">
+              <CheckCircle2 className="w-4 h-4" />保存
+            </button>
+          </div>
         </div>
-      )}
+        <div className="p-6 space-y-3 max-h-[70vh] overflow-y-auto">
+          {batches.map((batch, bIdx) => (
+            <div key={bIdx} className="border border-gray-200 rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between bg-gray-50 px-4 py-3">
+                <button onClick={() => setOpenBatch(openBatch === bIdx ? null : bIdx)} className="flex items-center gap-2 flex-1 text-left">
+                  {openBatch === bIdx ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                  <span className="text-xs text-gray-400 font-mono">Batch {batch.batchId}</span>
+                  <span className="font-semibold text-gray-800">{batch.category}</span>
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{batch.perspective}</span>
+                  <span className="text-xs text-gray-500">{batch.titles.length}件</span>
+                </button>
+                <button onClick={() => setBatches(prev => prev.filter((_, i) => i !== bIdx).map((b, i) => ({ ...b, batchId: i + 1 })))} className="text-red-400 hover:text-red-600 p-1 ml-2">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              {openBatch === bIdx && (
+                <div className="p-4 space-y-1.5">
+                  {batch.titles.map((title, tIdx) => (
+                    <div key={tIdx} className="group">
+                      {editingTitle?.batchIdx === bIdx && editingTitle?.titleIdx === tIdx ? (
+                        <div className="flex gap-2">
+                          <input value={titleInput} onChange={e => setTitleInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveTitle()} className="input flex-1 text-sm py-1.5" autoFocus />
+                          <button onClick={saveTitle} className="btn-primary py-1.5 text-xs">保存</button>
+                          <button onClick={() => setEditingTitle(null)} className="btn-secondary py-1.5 text-xs">×</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 p-2 rounded-lg hover:bg-gray-50">
+                          <span className="text-xs text-gray-400 font-mono mt-0.5 w-6 flex-shrink-0">{tIdx + 1}.</span>
+                          <span className="text-sm text-gray-700 flex-1 leading-relaxed">{title}</span>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 flex-shrink-0">
+                            <button onClick={() => { setEditingTitle({ batchIdx: bIdx, titleIdx: tIdx }); setTitleInput(title) }} className="text-gray-400 hover:text-shift-600 p-1"><Edit3 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setBatches(prev => prev.map((b, i) => i === bIdx ? { ...b, titles: b.titles.filter((_, j) => j !== tIdx), count: b.titles.length - 1 } : b))} className="text-gray-400 hover:text-red-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={() => {
+                    const newTitle = `新しいテスト項目 ${batch.titles.length + 1}`
+                    setBatches(prev => prev.map((b, i) => i === bIdx ? { ...b, titles: [...b.titles, newTitle], count: b.titles.length + 1 } : b))
+                    setEditingTitle({ batchIdx: bIdx, titleIdx: batch.titles.length }); setTitleInput(newTitle)
+                  }} className="flex items-center gap-1.5 text-xs text-shift-600 hover:text-shift-800 mt-2">
+                    <Plus className="w-3.5 h-3.5" />タイトルを追加
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
 
 export default function GeneratePage({ params }: { params: { id: string } }) {
   const router = useRouter()
-
   const [siteAnalysis, setSiteAnalysis] = useState<SiteAnalysis | null>(null)
   const [sourceCodeCount, setSourceCodeCount] = useState(0)
   const [sourceCodeChunks, setSourceCodeChunks] = useState(0)
-  const [maxItems, setMaxItems] = useState(100)
-  const [batchSizePerCall, setBatchSizePerCall] = useState(50) // 1回のAI呼び出しで生成する件数
-  // RAG取得チャンク数
-  const [ragTopKDoc, setRagTopKDoc] = useState(100)
-  const [ragTopKSite, setRagTopKSite] = useState(40)
-  const [ragTopKSrc, setRagTopKSrc] = useState(100)
-  const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(
-    new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性'])
-  )
-  // テスト観点ごとの件数配分（スライダー）
-  const [perspectiveMode, setPerspectiveMode] = useState<'ai' | 'percent' | 'weighted'>('ai')
-  const [perspectiveWeights, setPerspectiveWeights] = useState<Record<string, number>>({
-    '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10
-  })
-  const [perspectivePercents, setPerspectivePercents] = useState<Record<string, number>>({
-    '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10
-  })
-  const [targetMode, setTargetMode] = useState<'all' | 'pages'>('all')
-  const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set())
+  const [step, setStep] = useState<'plan' | 'execute'>('plan')
+
+  // プランニング設定
+  const [totalItems, setTotalItems] = useState(100)
+  const [batchSize, setBatchSize] = useState(50)
+  const [planModelId, setPlanModelId] = useState(MODEL_OPTIONS.find(m => m.isDefault)!.id)
+  const [planCustomModel, setPlanCustomModel] = useState('')
+  const [usePlanCustom, setUsePlanCustom] = useState(false)
+  const [perspectiveMode, setPerspectiveMode] = useState<'ai' | 'weighted'>('ai')
+  const [selectedPerspectives, setSelectedPerspectives] = useState<Set<string>>(new Set(['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']))
+  const [perspectiveWeights, setPerspectiveWeights] = useState<Record<string, number>>({ '機能テスト': 30, '正常系': 20, '異常系': 20, '境界値': 10, 'セキュリティ': 10, '操作性': 10 })
+  const [ragTopK, setRagTopK] = useState({ doc: 80, site: 30, src: 50 })
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [showDebug, setShowDebug] = useState(false)
-  const [showDesignMeta, setShowDesignMeta] = useState(false)
 
-  // テスト設計メタ情報（localStorageから復元）
-  const [industry, setIndustry] = useState<string>('SaaS')
-  const [systemCharacteristics, setSystemCharacteristics] = useState<Set<string>>(new Set())
-  const [designApproaches, setDesignApproaches] = useState<Set<string>>(new Set(['リスクベースドテスト']))
+  // 実行設定
+  const [execModelId, setExecModelId] = useState(MODEL_OPTIONS.find(m => m.isDefault)!.id)
+  const [execCustomModel, setExecCustomModel] = useState('')
+  const [useExecCustom, setUseExecCustom] = useState(false)
+  const [execRagTopK, setExecRagTopK] = useState({ doc: 100, site: 40, src: 100 })
 
-  // モデル選択
-  const [selectedModelId, setSelectedModelId] = useState(MODEL_OPTIONS.find(m => m.isDefault)!.id)
-  const [customModel, setCustomModel] = useState('')
-  const [useCustomModel, setUseCustomModel] = useState(false)
+  // プラン状態
+  const [plan, setPlan] = useState<TestPlan | null>(null)
+  const [showPlanEditor, setShowPlanEditor] = useState(false)
 
-  const [generating, setGenerating] = useState(false)
-  const [stageIdx, setStageIdx] = useState(0)
-  const [stageMessage, setStageMessage] = useState('')
-  const [progress, setProgress] = useState(0)
-  const [done, setDone] = useState(false)
+  // プランニング進捗
+  const [planning, setPlanning] = useState(false)
+  const [planError, setPlanError] = useState('')
+
+  // 実行進捗
+  const [executing, setExecuting] = useState(false)
+  const [currentBatch, setCurrentBatch] = useState(0)
+  const [totalBatches, setTotalBatches] = useState(0)
+  const [totalGenerated, setTotalGenerated] = useState(0)
+  const [execError, setExecError] = useState('')
+  const [execDone, setExecDone] = useState(false)
   const [isPartial, setIsPartial] = useState(false)
-  const [error, setError] = useState('')
-  const [resultCount, setResultCount] = useState(0)
-  const [jobDebug, setJobDebug] = useState<JobDebug | null>(null)
-  const [copied, setCopied] = useState(false)
-
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const progressRef = useRef(0)
-  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null)
-  const jobIdRef = useRef<string | null>(null)
+  const [currentBatchLabel, setCurrentBatchLabel] = useState('')
 
   useEffect(() => {
-    fetch(`/api/site-analysis?projectId=${params.id}`)
-      .then(r => r.json())
-      .then(data => { if (data?.id) setSiteAnalysis(data) })
-      .catch(() => {})
-    fetch(`/api/documents?projectId=${params.id}`)
-      .then(r => r.json())
-      .then((docs: Array<{ category: string; chunkCount?: number }>) => {
-        if (!Array.isArray(docs)) return
-        const srcDocs = docs.filter(d => d.category === 'source_code')
-        setSourceCodeCount(srcDocs.length)
-        setSourceCodeChunks(srcDocs.reduce((s, d) => s + (d.chunkCount ?? 0), 0))
-      })
-      .catch(() => {})
-    // localStorageからテスト設計ポリシーを復元
-    try {
-      const saved = localStorage.getItem(`designMeta_${params.id}`)
-      if (saved) {
-        const meta = JSON.parse(saved)
-        if (meta.industry) setIndustry(meta.industry)
-        if (meta.systemCharacteristics) setSystemCharacteristics(new Set(meta.systemCharacteristics))
-        if (meta.designApproaches) setDesignApproaches(new Set(meta.designApproaches))
-      }
-    } catch {}
+    fetch(`/api/site-analysis?projectId=${params.id}`).then(r => r.json()).then(d => { if (d?.id) setSiteAnalysis(d) }).catch(() => {})
+    fetch(`/api/documents?projectId=${params.id}`).then(r => r.json()).then((docs: Array<{ category: string; chunkCount?: number }>) => {
+      if (!Array.isArray(docs)) return
+      const src = docs.filter(d => d.category === 'source_code')
+      setSourceCodeCount(src.length); setSourceCodeChunks(src.reduce((s, d) => s + (d.chunkCount ?? 0), 0))
+    }).catch(() => {})
+    fetch(`/api/generate/plan?projectId=${params.id}`).then(r => r.json()).then(p => {
+      if (p?.id) { setPlan(p); setStep('execute') }
+    }).catch(() => {})
   }, [params.id])
 
-  useEffect(() => () => {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    if (progressTimer.current) clearInterval(progressTimer.current)
-  }, [])
+  const getPlanModel = () => usePlanCustom ? (planCustomModel.trim() || planModelId) : planModelId
+  const getExecModel = () => useExecCustom ? (execCustomModel.trim() || execModelId) : execModelId
 
-  const animateTo = (target: number) => {
-    if (progressTimer.current) clearInterval(progressTimer.current)
-    progressTimer.current = setInterval(() => {
-      progressRef.current = Math.min(progressRef.current + (target - progressRef.current) * 0.1 + 0.2, target)
-      setProgress(Math.round(progressRef.current * 10) / 10)
-      if (progressRef.current >= target - 0.1) clearInterval(progressTimer.current!)
-    }, 150)
-  }
-
-  const finishSuccess = (job: JobDebug) => {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    if (progressTimer.current) clearInterval(progressTimer.current)
-    progressRef.current = 100
-    setProgress(100)
-    setStageIdx(4)
-    setResultCount(job.count ?? 0)
-    setIsPartial(job.isPartial ?? false)
-    setJobDebug(job)
-    setDone(true)
-    setGenerating(false)
-    // テスト設計メタ情報をlocalStorageに保存（レビュータブで参照）
-    const meta = {
-      industry,
-      systemCharacteristics: Array.from(systemCharacteristics),
-      designApproaches: Array.from(designApproaches),
-      modelId: getModelId(),
-      modelLabel: useCustomModel ? customModel : (MODEL_OPTIONS.find(m => m.id === selectedModelId)?.label ?? selectedModelId),
-      generatedAt: new Date().toISOString(),
-      maxItems,
-      batchSize: batchSizePerCall,
-      ragTopK: { doc: ragTopKDoc, site: ragTopKSite, src: ragTopKSrc },
-      perspectives: Array.from(selectedPerspectives),
-    }
-    try { localStorage.setItem(`designMeta_${params.id}`, JSON.stringify(meta)) } catch {}
-    // テスト再生成時はレビュー結果をクリア
-    try { localStorage.removeItem(`reviewResult_${params.id}`) } catch {}
-  }
-
-  const finishError = (msg: string, job?: JobDebug) => {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    if (progressTimer.current) clearInterval(progressTimer.current)
-    setError(msg)
-    if (job) setJobDebug(job)
-    setGenerating(false)
-    setShowDebug(true)
-  }
-
-  const startPolling = (jobId: string) => {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    pollingRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/generate/status?jobId=${jobId}`)
-        if (!res.ok) return
-        const job: JobDebug = await res.json()
-        setJobDebug(job)
-
-        if (typeof job.stage === 'number') {
-          setStageIdx(job.stage)
-          setStageMessage(job.message || '')
-          animateTo(STAGE_PROGRESS[Math.min(job.stage, STAGE_PROGRESS.length - 2)])
-        }
-        if (job.status === 'completed') finishSuccess(job)
-        else if (job.status === 'error') finishError(job.error || 'AI生成に失敗しました', job)
-      } catch (e) {
-        console.warn('Polling error:', e)
-      }
-    }, 3000)
-  }
-
-  const getTargetPages = (): PageInfo[] | null => {
-    if (targetMode === 'all' || !siteAnalysis) return null
-    return (siteAnalysis.pages ?? []).filter(p => selectedPages.has(p.url))
-  }
-
-  const getModelId = () => useCustomModel ? (customModel.trim() || selectedModelId) : selectedModelId
-
-  const generate = async () => {
-    const targetPages = getTargetPages()
-    if (targetMode === 'pages' && (!targetPages || targetPages.length === 0)) {
-      setError('画面単位モードでは1ページ以上を選択してください')
-      return
-    }
-
-    setGenerating(true)
-    progressRef.current = 0
-    setProgress(0)
-    setStageIdx(1)
-    setStageMessage('ジョブを登録中...')
-    setDone(false)
-    setIsPartial(false)
-    setError('')
-    setJobDebug(null)
-    jobIdRef.current = null
-    animateTo(8)
-
+  const runPlanning = async () => {
+    setPlanning(true); setPlanError(''); setPlan(null)
     try {
-      // Step1: jobId取得
-      const startRes = await fetch('/api/generate/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: params.id,
-          maxItems,
-          perspectives: Array.from(selectedPerspectives),
-          targetPages,
-          modelOverride: getModelId(),
-        }),
+      const weights = perspectiveMode === 'weighted'
+        ? Array.from(selectedPerspectives).filter(p => (perspectiveWeights[p] ?? 0) > 0).map(p => ({ value: p, count: perspectiveWeights[p] }))
+        : undefined
+      const res = await fetch('/api/generate/plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: params.id, totalItems, batchSize,
+          perspectives: perspectiveMode === 'ai' ? Array.from(selectedPerspectives) : undefined,
+          perspectiveWeights: weights, modelOverride: getPlanModel(), ragTopK }),
       })
-
-      const startData = await startRes.json()
-      if (!startData.jobId) throw new Error(startData.error || 'jobIdが返されませんでした')
-
-      const { jobId, modelOverride } = startData
-      jobIdRef.current = jobId
-
-      // フロント側でバッチ数を計算（batchSizePerCallはUI設定値を使用）
-      const effectiveBatchSize = batchSizePerCall
-      const totalBatches = Math.ceil(maxItems / effectiveBatchSize)
-
-      // 観点の重み付けを計算
-      const getWeightedPersp = (batchSz: number) => {
-        if (perspectiveMode === 'weighted') {
-          return Array.from(selectedPerspectives)
-            .filter(p => (perspectiveWeights[p] ?? 0) > 0)
-            .map(p => ({ value: p, count: Math.round((perspectiveWeights[p] ?? 0) / 100 * batchSz) }))
-        }
-        if (perspectiveMode === 'percent') {
-          const totalPct = PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value))
-            .reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0) || 100
-          return Array.from(selectedPerspectives).map(p => ({
-            value: p,
-            count: Math.round(((perspectivePercents[p] ?? 0) / totalPct) * batchSz)
-          })).filter(w => w.count > 0)
-        }
-        return undefined // AIに任せる
-      }
-
-      // Step2: バッチを順番に実行
-      let totalGenerated = 0
-      let isTimeout = false
-      let usedModel = modelOverride || getModelId()
-      let ragBreakdown = { doc: 0, site: 0, src: 0 }
-
-      for (let batch = 1; batch <= totalBatches; batch++) {
-        const remaining = maxItems - totalGenerated
-        if (remaining <= 0) break
-
-        const currentBatch = Math.min(effectiveBatchSize, remaining)
-        const progressPct = 10 + ((batch - 1) / totalBatches) * 75
-        animateTo(progressPct)
-        setStageIdx(2)
-        setStageMessage(`バッチ ${batch}/${totalBatches} 実行中（${totalGenerated}件生成済）`)
-
-        const batchRes = await fetch('/api/generate/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jobId,
-            projectId: params.id,
-            batchNum: batch,
-            totalBatches,
-            batchSize: currentBatch,
-            alreadyCount: totalGenerated,
-            perspectives: perspectiveMode === 'ai' ? Array.from(selectedPerspectives) : undefined,
-            perspectiveWeights: getWeightedPersp(currentBatch),
-            targetPages,
-            modelOverride,
-            // RAGチャンク数をフロントから指定
-            ragTopK: { doc: ragTopKDoc, site: ragTopKSite, src: ragTopKSrc },
-          }),
-        })
-
-        const batchData = await batchRes.json()
-        console.log(`[batch ${batch}/${totalBatches}]`, batchData)
-
-        if (!batchRes.ok || batchData.error) {
-          throw new Error(`バッチ${batch}でエラー: ${batchData.error}`)
-        }
-
-        totalGenerated += batchData.count ?? 0
-        if (batchData.model) usedModel = batchData.model
-        if (batchData.ragBreakdown) ragBreakdown = batchData.ragBreakdown
-
-        if (batchData.aborted) {
-          isTimeout = true
-          console.warn(`Batch ${batch} was aborted (timeout)`)
-          break
-        }
-      }
-
-      // Step3: 完了処理
-      animateTo(97)
-      setStageIdx(3)
-      setStageMessage('完了処理中...')
-
-      // KVのジョブを完了状態に更新
-      await fetch('/api/generate/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jobId,
-          projectId: params.id,
-          count: totalGenerated,
-          isPartial: isTimeout,
-          targetPages,
-        }),
-      }).catch(() => {}) // 失敗しても続行
-
-      const finalJob: JobDebug = {
-        status: 'completed',
-        stage: 4,
-        message: isTimeout ? `タイムアウトのため途中保存（${totalGenerated}件）` : `完了（${totalGenerated}件）`,
-        count: totalGenerated,
-        isPartial: isTimeout,
-        model: usedModel,
-        breakdown: {
-          documents: ragBreakdown.doc,
-          siteAnalysis: ragBreakdown.site,
-          sourceCode: ragBreakdown.src,
-        },
-      }
-      finishSuccess(finalJob)
-
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || 'プランニングに失敗しました')
+      setPlan(data.plan); setStep('execute')
     } catch (e) {
-      console.error('[generate] error:', e)
-      finishError(e instanceof Error ? e.message : 'AI生成に失敗しました')
-    }
+      setPlanError(e instanceof Error ? e.message : 'プランニングに失敗しました')
+    } finally { setPlanning(false) }
   }
 
-  const copyDebug = () => {
-    navigator.clipboard.writeText(JSON.stringify(jobDebug, null, 2))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const savePlan = async (updated: TestPlan) => {
+    await fetch('/api/generate/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: updated }) })
+    setPlan(updated); setShowPlanEditor(false)
   }
 
-  const selectedModel = MODEL_OPTIONS.find(m => m.id === selectedModelId)
+  const runExecution = async () => {
+    if (!plan) return
+    setExecuting(true); setExecError(''); setExecDone(false); setTotalGenerated(0); setCurrentBatch(0); setIsPartial(false)
+    try {
+      const startRes = await fetch('/api/generate/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: params.id, maxItems: plan.totalItems, modelOverride: getExecModel() }),
+      })
+      const startData = await startRes.json()
+      if (!startData.jobId) throw new Error(startData.error || 'ジョブ開始に失敗しました')
+
+      const batches = plan.batches; setTotalBatches(batches.length)
+      let generated = 0; let aborted = false
+
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i]; setCurrentBatch(i + 1); setCurrentBatchLabel(`${batch.category} / ${batch.perspective}`)
+        const batchRes = await fetch('/api/generate/batch', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: startData.jobId, projectId: params.id, batchNum: i + 1, totalBatches: batches.length, alreadyCount: generated, planBatch: batch, modelOverride: getExecModel(), ragTopK: execRagTopK }),
+        })
+        const batchData = await batchRes.json()
+        if (!batchRes.ok || batchData.error) throw new Error(`バッチ${i + 1}でエラー: ${batchData.error}`)
+        generated += batchData.count ?? 0; setTotalGenerated(generated)
+        if (batchData.aborted) { aborted = true; break }
+      }
+
+      await fetch('/api/generate/complete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: startData.jobId, projectId: params.id, count: generated, isPartial: aborted, targetPages: null }),
+      }).catch(() => {})
+
+      const completedPlan = { ...plan, status: 'completed' as const, execModelId: getExecModel() }
+      await fetch('/api/generate/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: completedPlan }) })
+      setPlan(completedPlan); setIsPartial(aborted); setExecDone(true)
+    } catch (e) {
+      setExecError(e instanceof Error ? e.message : 'テスト項目の生成に失敗しました')
+    } finally { setExecuting(false) }
+  }
+
+  const totalPlanItems = plan?.batches.reduce((s, b) => s + b.titles.length, 0) ?? 0
+  const progressPct = totalBatches > 0 ? Math.round((currentBatch / totalBatches) * 100) : 0
 
   return (
     <div className="max-w-3xl animate-fade-in space-y-5">
       <div>
         <h1 className="text-xl font-bold text-gray-900">AIテスト項目生成</h1>
-        <p className="text-sm text-gray-500 mt-0.5">ドキュメント・URL分析・ソースコードをRAGで活用してテスト項目を生成します</p>
+        <p className="text-sm text-gray-500 mt-0.5">
+          <span className="font-semibold text-shift-700">① プランニング</span> → 仕様書を分析してテスト設計方針を立案 →
+          確認・編集 → <span className="font-semibold text-shift-700">② 実行</span> → 詳細生成
+        </p>
+      </div>
+
+      {/* ステップインジケーター */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => setStep('plan')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${step === 'plan' ? 'bg-shift-700 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+          <ClipboardList className="w-4 h-4" />① プランニング
+        </button>
+        <ChevronRight className="w-4 h-4 text-gray-400" />
+        <button onClick={() => plan && setStep('execute')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${step === 'execute' ? 'bg-shift-700 text-white shadow-sm' : plan ? 'bg-gray-100 text-gray-500 hover:bg-gray-200' : 'bg-gray-50 text-gray-300 cursor-not-allowed'}`}>
+          <Play className="w-4 h-4" />② 実行{plan && <span className="text-xs opacity-80">({totalPlanItems}件)</span>}
+        </button>
       </div>
 
       {/* RAGデータ状況 */}
@@ -497,9 +322,9 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">RAGデータ利用状況</p>
         <div className="space-y-2">
           {[
-            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true,              note: 'ドキュメント管理で確認' },
-            { icon: Globe,    label: 'URL構造分析',  available: !!siteAnalysis,             note: siteAnalysis ? `${siteAnalysis.pageCount}ページ / チャンク: ${siteAnalysis.chunkCount ?? 0}` : '未実施（任意）' },
-            { icon: Code2,    label: 'ソースコード',  available: sourceCodeCount > 0,        note: sourceCodeCount > 0 ? `${sourceCodeCount}件取込済 / チャンク: ${sourceCodeChunks}` : '未取込（任意）' },
+            { icon: FileText, label: 'ドキュメント（要件定義書・設計書・ナレッジ）', available: true, note: 'ドキュメント管理で確認' },
+            { icon: Globe, label: 'URL構造分析', available: !!siteAnalysis, note: siteAnalysis ? `${siteAnalysis.pageCount}ページ` : '未実施（任意）' },
+            { icon: Code2, label: 'ソースコード', available: sourceCodeCount > 0, note: sourceCodeCount > 0 ? `${sourceCodeCount}件 / チャンク: ${sourceCodeChunks}` : '未取込（任意）' },
           ].map(({ icon: Icon, label, available, note }) => (
             <div key={label} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
               <Icon className={`w-4 h-4 flex-shrink-0 ${available ? 'text-green-600' : 'text-gray-300'}`} />
@@ -510,611 +335,237 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* モデル選択 */}
-      <div className="card">
-        <div className="p-4 border-b border-gray-100">
-          <p className="text-sm font-semibold text-gray-900">使用AIモデル</p>
-          <p className="text-xs text-gray-400 mt-0.5">OpenRouter経由で呼び出します。APIキー: OPENROUTER_API_KEY</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="w-8 px-3 py-2"></th>
-                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">モデル名</th>
-                <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">入力/1M</th>
-                <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500">出力/1M</th>
-                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">特徴</th>
-                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {MODEL_OPTIONS.map(m => (
-                <tr
-                  key={m.id}
-                  onClick={() => { setSelectedModelId(m.id); setUseCustomModel(false) }}
-                  className={`cursor-pointer transition-colors ${
-                    !useCustomModel && selectedModelId === m.id
-                      ? 'bg-shift-50 border-l-2 border-l-shift-700'
-                      : 'hover:bg-gray-50 border-l-2 border-l-transparent'
-                  }`}
-                >
-                  <td className="px-3 py-2.5 text-center">
-                    <input
-                      type="radio"
-                      name="model"
-                      checked={!useCustomModel && selectedModelId === m.id}
-                      onChange={() => { setSelectedModelId(m.id); setUseCustomModel(false) }}
-                      className="accent-shift-700"
-                    />
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="font-medium text-gray-900">{m.label}</div>
-                    <div className="text-xs text-gray-400 font-mono">{m.id}</div>
-                  </td>
-                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>
-                    {m.inputCost}
-                  </td>
-                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${m.isFree ? 'text-green-600 font-bold' : 'text-gray-600'}`}>
-                    {m.outputCost}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-500 max-w-xs">{m.feature}</td>
-                  <td className="px-3 py-2.5 text-center">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SPEED_COLOR[m.speed]}`}>
-                      {m.speed === '爆速' && <span>⚡ </span>}{m.speed}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {/* カスタム入力行 */}
-              <tr
-                onClick={() => setUseCustomModel(true)}
-                className={`cursor-pointer transition-colors ${
-                  useCustomModel
-                    ? 'bg-shift-50 border-l-2 border-l-shift-700'
-                    : 'hover:bg-gray-50 border-l-2 border-l-transparent'
-                }`}
-              >
-                <td className="px-3 py-2.5 text-center">
-                  <input
-                    type="radio"
-                    name="model"
-                    checked={useCustomModel}
-                    onChange={() => setUseCustomModel(true)}
-                    className="accent-shift-700"
-                  />
-                </td>
-                <td className="px-3 py-2.5" colSpan={5}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700 flex-shrink-0">任意のモデルを指定</span>
-                    <input
-                      type="text"
-                      placeholder="例: meta-llama/llama-3.1-70b-instruct"
-                      value={customModel}
-                      onChange={e => { setCustomModel(e.target.value); setUseCustomModel(true) }}
-                      onClick={e => e.stopPropagation()}
-                      className="input py-1 text-xs font-mono flex-1"
-                    />
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        {!useCustomModel && selectedModel && (
-          <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
-            選択中: <span className="font-mono font-semibold">{selectedModel.id}</span>
-          </div>
-        )}
-        {useCustomModel && customModel && (
-          <div className="px-4 py-2 bg-shift-50 border-t border-shift-100 text-xs text-shift-700">
-            選択中: <span className="font-mono font-semibold">{customModel}</span>
-          </div>
-        )}
-      </div>
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* STEP 1: プランニング */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {step === 'plan' && (
+        <>
+          <ModelSelector label="① プランニング用AIモデル（テスト設計方針の立案）"
+            selectedId={planModelId} customModel={planCustomModel} useCustom={usePlanCustom}
+            onSelect={id => { setPlanModelId(id); setUsePlanCustom(false) }}
+            onCustomChange={setPlanCustomModel} onUseCustom={() => setUsePlanCustom(true)} />
 
-      {/* 画面単位選択 */}
-      {siteAnalysis && (
-        <div className="card p-5">
-          <p className="text-sm font-semibold text-gray-900 mb-3">生成対象</p>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            {[
-              { mode: 'all' as const,   icon: List,       label: '全体を対象',     desc: 'すべての資料・画面を対象に生成' },
-              { mode: 'pages' as const, icon: LayoutGrid, label: '画面単位で指定', desc: '特定の画面に絞って生成・追記' },
-            ].map(({ mode, icon: Icon, label, desc }) => (
-              <button key={mode} onClick={() => setTargetMode(mode)}
-                className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left transition-all ${targetMode === mode ? 'border-shift-700 bg-shift-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                <Icon className={`w-4 h-4 ${targetMode === mode ? 'text-shift-700' : 'text-gray-400'}`} />
+          <div className="card">
+            <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors" onClick={() => setShowAdvanced(!showAdvanced)}>
+              <div className="flex items-center gap-2"><Settings className="w-4 h-4 text-gray-500" /><span className="font-semibold text-gray-900 text-sm">生成パラメータ</span></div>
+              {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+            </button>
+            {showAdvanced && (
+              <div className="px-4 pb-4 space-y-6 border-t border-gray-100 pt-4">
                 <div>
-                  <p className={`text-sm font-semibold ${targetMode === mode ? 'text-shift-800' : 'text-gray-700'}`}>{label}</p>
-                  <p className="text-xs text-gray-400">{desc}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-          {targetMode === 'pages' && (
-            <>
-              <div className="border border-gray-200 rounded-xl overflow-hidden">
-                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-600">画面を選択（{selectedPages.size}件）</span>
-                  <div className="flex gap-3">
-                    <button className="text-xs text-shift-700 hover:underline"
-                      onClick={() => setSelectedPages(new Set((siteAnalysis.pages ?? []).map(p => p.url)))}>全選択</button>
-                    <button className="text-xs text-gray-500 hover:underline"
-                      onClick={() => setSelectedPages(new Set())}>全解除</button>
+                  <label className="label">総生成件数</label>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {[50, 100, 200, 300, 500].map(v => (
+                      <button key={v} onClick={() => setTotalItems(v)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${totalItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>{v}件</button>
+                    ))}
+                    <input type="number" min={10} max={5000} value={totalItems} onChange={e => setTotalItems(Number(e.target.value))} className="input py-1.5 w-28 text-sm" />
                   </div>
                 </div>
-                <div className="max-h-60 overflow-y-auto divide-y divide-gray-100">
-                  {(siteAnalysis.pages ?? []).map(page => (
-                    <label key={page.url} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox" className="w-4 h-4 accent-shift-700 flex-shrink-0"
-                        checked={selectedPages.has(page.url)}
-                        onChange={() => setSelectedPages(prev => { const next = new Set(prev); next.has(page.url) ? next.delete(page.url) : next.add(page.url); return next })} />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{page.title}</p>
-                        <p className="text-xs text-gray-400 font-mono truncate">{page.url}</p>
+                <div>
+                  <label className="label">1バッチあたりの件数</label>
+                  <p className="text-xs text-gray-400 mb-2">{totalItems}件 ÷ {batchSize}件 = <strong className="text-shift-700">{Math.ceil(totalItems / batchSize)}バッチ</strong></p>
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {[25, 50, 75, 100].map(v => (
+                      <button key={v} onClick={() => setBatchSize(v)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${batchSize === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>{v}件</button>
+                    ))}
+                    <input type="number" min={10} max={200} value={batchSize} onChange={e => setBatchSize(Number(e.target.value))} className="input py-1.5 w-28 text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label className="label">テスト観点の配分</label>
+                  <div className="flex gap-2 mb-3">
+                    {[{ mode: 'ai' as const, label: 'AIに任せる' }, { mode: 'weighted' as const, label: '件数で指定' }].map(({ mode, label }) => (
+                      <button key={mode} onClick={() => setPerspectiveMode(mode)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${perspectiveMode === mode ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>{label}</button>
+                    ))}
+                  </div>
+                  {perspectiveMode === 'ai' && (
+                    <div className="flex flex-wrap gap-2">
+                      {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
+                        <button key={value} onClick={() => setSelectedPerspectives(prev => { const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next })}
+                          className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${selectedPerspectives.has(value) ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-white text-gray-500 border-gray-200'}`}>{label}</button>
+                      ))}
+                    </div>
+                  )}
+                  {perspectiveMode === 'weighted' && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-gray-400">合計: <span className="font-semibold text-shift-700">{PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectiveWeights[p.value] ?? 0), 0)}件</span></p>
+                      {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
+                        const enabled = selectedPerspectives.has(value); const count = perspectiveWeights[value] ?? 0
+                        return (
+                          <div key={value} className="flex items-center gap-3">
+                            <button onClick={() => setSelectedPerspectives(prev => { const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next })}
+                              className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium ${enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>{label}</button>
+                            <input type="range" min={0} max={200} step={5} value={count} disabled={!enabled} onChange={e => setPerspectiveWeights(prev => ({ ...prev, [value]: Number(e.target.value) }))} className="flex-1 accent-shift-700 disabled:opacity-30" />
+                            <span className={`w-12 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>{enabled ? `${count}件` : 'OFF'}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="label">RAG取得チャンク数</label>
+                  <div className="space-y-2">
+                    {[{ label: '📄 ドキュメント', key: 'doc' as const, max: 200 }, { label: '🌐 サイト構造', key: 'site' as const, max: 100 }, { label: '💻 ソースコード', key: 'src' as const, max: 200 }].map(({ label, key, max }) => (
+                      <div key={key} className="flex items-center gap-3">
+                        <span className="w-28 text-xs text-gray-600 flex-shrink-0">{label}</span>
+                        <input type="range" min={0} max={max} step={10} value={ragTopK[key]} onChange={e => setRagTopK(prev => ({ ...prev, [key]: Number(e.target.value) }))} className="flex-1 accent-shift-700" />
+                        <input type="number" min={0} max={max} value={ragTopK[key]} onChange={e => setRagTopK(prev => ({ ...prev, [key]: Number(e.target.value) }))} className="input py-1 w-16 text-xs text-right" />
+                        <span className="text-xs text-gray-400">件</span>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">F:{page.forms} B:{page.buttons}</span>
-                    </label>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
-              <p className="text-xs text-amber-600 mt-2">※ 画面単位モードは既存のテスト項目に追記されます</p>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* テスト設計ポリシー設定 */}
-      <div className="card">
-        <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-          onClick={() => setShowDesignMeta(!showDesignMeta)}>
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-shift-600" />
-            <span className="font-semibold text-gray-900 text-sm">テスト設計ポリシー</span>
-            <span className="text-xs text-gray-400">（業界・特性・アプローチ）</span>
-            {(systemCharacteristics.size > 0 || designApproaches.size > 0) && (
-              <span className="text-xs bg-shift-100 text-shift-700 px-1.5 py-0.5 rounded-full">設定済</span>
             )}
           </div>
-          {showDesignMeta ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-        </button>
-        {showDesignMeta && (
-          <div className="px-4 pb-4 space-y-5 border-t border-gray-100 pt-4">
-            <p className="text-xs text-gray-400">設定した情報は生成後にレビュータブで活用され、業界特性に応じた品質評価を行います。<br />各ボタンにマウスを当てると説明が表示されます。</p>
 
-            {/* 対象業界 */}
-            <div>
-              <label className="label">対象業界</label>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  { v: '金融',   tip: '銀行・証券・保険など。コンプライアンス・監査証跡・取引整合性が重要' },
-                  { v: '医療',   tip: '電子カルテ・医療機器連携など。患者安全・データ完全性・法規制準拠が最重要' },
-                  { v: 'EC',     tip: 'ECサイト・決済システムなど。カート・在庫・決済フロー・高負荷耐性が重要' },
-                  { v: 'SaaS',   tip: 'マルチテナントSaaS。テナント分離・API品質・認証・スケーラビリティが重要' },
-                  { v: '製造',   tip: 'MES・ERPなど。ロット管理・トレーサビリティ・工程連携の整合性が重要' },
-                  { v: '公共',   tip: '行政システムなど。アクセシビリティ・個人情報保護・長期運用安定性が重要' },
-                  { v: 'その他', tip: '上記以外の業界。汎用的なテスト設計を行います' },
-                ] as const).map(({ v, tip }) => (
-                  <PolicyTipButton key={v} value={v} tip={tip}
-                    active={industry === v}
-                    onClick={() => setIndustry(v)}
-                    activeClass="bg-shift-800 text-white border-shift-800"
-                    inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-shift-400" />
-                ))}
-              </div>
+          {planError && (
+            <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div><p className="text-sm font-semibold text-red-800">プランニングに失敗しました</p><p className="text-xs text-red-600 mt-0.5 whitespace-pre-wrap">{planError}</p></div>
             </div>
-
-            {/* システム特性 */}
-            <div>
-              <label className="label">システム特性（複数可）</label>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  { v: 'セキュリティ重要',  tip: '認証・認可・暗号化・SQLi/XSS防御など。OWASPベースのセキュリティテストを重点的に生成します' },
-                  { v: '高可用性要求',       tip: '24/365稼働・フェイルオーバー・RPO/RTOが厳しく定義されているシステム。障害回復テストを追加します' },
-                  { v: '並行処理あり',       tip: '複数ユーザーが同時にデータを更新する環境。競合・デッドロック・排他制御テストを追加します' },
-                  { v: 'リアルタイム処理',  tip: 'WebSocket・ストリーミングなど。遅延・タイムアウト・同期テストを追加します' },
-                  { v: '大規模データ',       tip: '大量レコードの検索・集計が必要。パフォーマンス・ページング・インデックステストを追加します' },
-                  { v: '外部連携多数',       tip: 'API・外部サービスとの連携が多い。エラーハンドリング・タイムアウト・冪等性テストを追加します' },
-                ] as const).map(({ v, tip }) => {
-                  const active = systemCharacteristics.has(v)
-                  return (
-                    <PolicyTipButton key={v} value={v} tip={tip}
-                      active={active}
-                      onClick={() => setSystemCharacteristics(prev => {
-                        const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
-                      })}
-                      activeClass="bg-red-100 text-red-800 border-red-300"
-                      inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-red-300" />
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* テスト設計アプローチ */}
-            <div>
-              <label className="label">テスト設計アプローチ（複数可）</label>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  { v: 'リスクベースドテスト',  tip: '欠陥リスクが高い機能から優先的にテスト設計。工数対効果が高く、実務で広く採用されている手法です' },
-                  { v: 'セキュリティ重点設計',  tip: 'OWASP Top10・認証フロー・入力検証・セッション管理を重点的にカバーする設計方針です' },
-                  { v: '境界値分析中心',         tip: '入力値の境界（最小・最大・境界前後）を体系的に網羅。数値・文字数・日付入力に特に有効です' },
-                  { v: '状態遷移重視',            tip: 'ワークフロー・ステータス遷移を状態遷移図で網羅。申請フロー・注文状態などに有効な設計手法です' },
-                  { v: 'ユーザビリティ重点',      tip: 'UI/UX・操作性・エラーメッセージの分かりやすさを重点評価。ユーザー操作視点でテストを設計します' },
-                  { v: '性能重点',                tip: '応答時間・スループット・同時接続数・メモリ使用量を定量的に評価するテストを設計します' },
-                ] as const).map(({ v, tip }) => {
-                  const active = designApproaches.has(v)
-                  return (
-                    <PolicyTipButton key={v} value={v} tip={tip}
-                      active={active}
-                      onClick={() => setDesignApproaches(prev => {
-                        const next = new Set(prev); active ? next.delete(v) : next.add(v); return next
-                      })}
-                      activeClass="bg-blue-100 text-blue-800 border-blue-300"
-                      inactiveClass="bg-white text-gray-600 border-gray-200 hover:border-blue-300" />
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 詳細設定 */}
-      <div className="card">
-        <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-          onClick={() => setShowAdvanced(!showAdvanced)}>
-          <div className="flex items-center gap-2">
-            <Settings className="w-4 h-4 text-gray-500" />
-            <span className="font-semibold text-gray-900 text-sm">生成パラメータ</span>
-          </div>
-          {showAdvanced ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-        </button>
-        {showAdvanced && (
-          <div className="px-4 pb-4 space-y-6 border-t border-gray-100 pt-4">
-
-            {/* 最大生成件数 */}
-            <div>
-              <label className="label">最大生成件数</label>
-              <div className="flex gap-2 flex-wrap items-center">
-                {[50, 100, 200, 300, 500].map(v => (
-                  <button key={v} onClick={() => setMaxItems(v)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${maxItems === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
-                    {v}件
-                  </button>
-                ))}
-                <input type="number" min={10} max={5000} value={maxItems}
-                  onChange={e => setMaxItems(Number(e.target.value))}
-                  className="input py-1.5 w-28 text-sm" />
-              </div>
-            </div>
-
-            {/* 1バッチあたりの生成件数 */}
-            <div>
-              <label className="label">1回のAI呼び出しで生成する件数</label>
-              <p className="text-xs text-gray-400 mb-2">
-                最大{maxItems}件 ÷ {batchSizePerCall}件 = <strong className="text-shift-700">{Math.ceil(maxItems / batchSizePerCall)}バッチ</strong>実行されます
-              </p>
-              <div className="flex gap-2 flex-wrap items-center">
-                {[25, 50, 75, 100].map(v => (
-                  <button key={v} onClick={() => setBatchSizePerCall(v)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${batchSizePerCall === v ? 'bg-shift-800 text-white border-shift-800' : 'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>
-                    {v}件
-                  </button>
-                ))}
-                <input type="number" min={10} max={200} value={batchSizePerCall}
-                  onChange={e => setBatchSizePerCall(Number(e.target.value))}
-                  className="input py-1.5 w-28 text-sm" />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">⚠️ Vercel無料プランは60秒/リクエスト制限。爆速モデルなら100件/バッチも可。DeepSeekは50件以下推奨。</p>
-            </div>
-
-            {/* RAGチャンク数 */}
-            <div>
-              <label className="label">RAG取得チャンク数</label>
-              <p className="text-xs text-gray-400 mb-3">多いほど参照情報が増えますが、プロンプトが長くなり生成が遅くなります</p>
-              <div className="space-y-3">
-                {[
-                  { label: '📄 ドキュメント', value: ragTopKDoc, setter: setRagTopKDoc, max: 200 },
-                  { label: '🌐 サイト構造',   value: ragTopKSite, setter: setRagTopKSite, max: 100 },
-                  { label: '💻 ソースコード', value: ragTopKSrc, setter: setRagTopKSrc, max: 200 },
-                ].map(({ label, value, setter, max }) => (
-                  <div key={label} className="flex items-center gap-3">
-                    <span className="w-28 text-xs text-gray-600 flex-shrink-0">{label}</span>
-                    <input type="range" min={0} max={max} step={10}
-                      value={value}
-                      onChange={e => setter(Number(e.target.value))}
-                      className="flex-1 accent-shift-700" />
-                    <input type="number" min={0} max={max} value={value}
-                      onChange={e => setter(Number(e.target.value))}
-                      className="input py-1 w-16 text-xs text-right" />
-                    <span className="text-xs text-gray-400">件</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* テスト観点 */}
-            <div>
-              <label className="label">テスト観点の配分</label>
-              <div className="flex gap-2 mb-3">
-                {[
-                  { mode: 'ai'       as const, label: 'おすすめ（AI任せ）' },
-                  { mode: 'percent'  as const, label: '割合指定 (%)' },
-                  { mode: 'weighted' as const, label: '件数指定' },
-                ].map(({ mode, label }) => (
-                  <button key={mode} onClick={() => setPerspectiveMode(mode)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      perspectiveMode === mode
-                        ? 'bg-shift-800 text-white border-shift-800'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-                    }`}>{label}</button>
-                ))}
-              </div>
-
-              {perspectiveMode === 'ai' && (
-                <div>
-                  <p className="text-xs text-gray-400 mb-2">AIが仕様書の内容から最適な観点と配分を判断します</p>
-                  <div className="flex flex-wrap gap-2">
-                    {PERSPECTIVE_OPTIONS.map(({ value, label }) => (
-                      <button key={value} onClick={() => setSelectedPerspectives(prev => {
-                        const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                      })}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                          selectedPerspectives.has(value)
-                            ? 'bg-shift-100 text-shift-800 border-shift-400'
-                            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                        }`}>{label}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {perspectiveMode === 'percent' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-400">
-                    合計: <span className={`font-semibold ${
-                      Math.abs(PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0) - 100) < 1
-                        ? 'text-green-600' : 'text-amber-600'
-                    }`}>
-                      {PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectivePercents[p.value] ?? 0), 0)}%
-                    </span>
-                    <span className="ml-1">（合計100%になるよう調整してください）</span>
-                  </p>
-                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
-                    const enabled = selectedPerspectives.has(value)
-                    const pct = perspectivePercents[value] ?? 0
-                    const estCount = Math.round(maxItems * pct / 100)
-                    return (
-                      <div key={value} className="flex items-center gap-3">
-                        <button onClick={() => setSelectedPerspectives(prev => {
-                          const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                        })}
-                          className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium transition-all ${
-                            enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'
-                          }`}>{label}</button>
-                        <input type="range" min={0} max={100} step={5}
-                          value={pct} disabled={!enabled}
-                          onChange={e => setPerspectivePercents(prev => ({ ...prev, [value]: Number(e.target.value) }))}
-                          className="flex-1 accent-shift-700 disabled:opacity-30" />
-                        <span className={`w-20 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>
-                          {enabled ? `${pct}% ≈${estCount}件` : 'OFF'}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              {perspectiveMode === 'weighted' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-gray-400">
-                    合計: <span className="font-semibold text-shift-700">
-                      {PERSPECTIVE_OPTIONS.filter(p => selectedPerspectives.has(p.value)).reduce((s, p) => s + (perspectiveWeights[p.value] ?? 0), 0)}件
-                    </span>
-                    （各バッチ内での配分に使用されます）
-                  </p>
-                  {PERSPECTIVE_OPTIONS.map(({ value, label }) => {
-                    const enabled = selectedPerspectives.has(value)
-                    const count = perspectiveWeights[value] ?? 0
-                    return (
-                      <div key={value} className="flex items-center gap-3">
-                        <button onClick={() => setSelectedPerspectives(prev => {
-                          const next = new Set(prev); next.has(value) ? next.delete(value) : next.add(value); return next
-                        })}
-                          className={`w-20 flex-shrink-0 text-xs px-2 py-1 rounded-lg border text-center font-medium transition-all ${
-                            enabled ? 'bg-shift-100 text-shift-800 border-shift-400' : 'bg-gray-50 text-gray-400 border-gray-200'
-                          }`}>{label}</button>
-                        <input type="range" min={0} max={200} step={5}
-                          value={count} disabled={!enabled}
-                          onChange={e => setPerspectiveWeights(prev => ({ ...prev, [value]: Number(e.target.value) }))}
-                          className="flex-1 accent-shift-700 disabled:opacity-30" />
-                        <span className={`w-12 text-right text-xs font-mono font-semibold ${enabled ? 'text-shift-700' : 'text-gray-300'}`}>
-                          {enabled ? `${count}件` : 'OFF'}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 生成ボタン */}
-      {!generating && !done && (
-        <button className="btn-primary w-full justify-center py-4 text-base" onClick={generate}>
-          <Sparkles className="w-5 h-5" />
-          {targetMode === 'pages' && selectedPages.size > 0
-            ? `選択した${selectedPages.size}画面のテスト項目を生成（追記）`
-            : 'AIテスト項目を生成する'}
-        </button>
-      )}
-
-      {/* プログレス */}
-      {generating && (
-        <div className="card p-6 animate-fade-in">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Loader2 className="w-5 h-5 text-shift-600 animate-spin" />
-              <span className="font-semibold text-gray-900 text-sm">AI生成中...</span>
-            </div>
-            <span className="text-lg font-bold text-shift-700">{Math.round(progress)}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
-            <div className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%` }} />
-          </div>
-          <div className="space-y-2">
-            {STAGES.map((stage, i) => (
-              <div key={stage} className={`flex items-center gap-2 text-xs transition-all ${i === stageIdx ? 'text-shift-700 font-semibold' : i < stageIdx ? 'text-green-600' : 'text-gray-400'}`}>
-                {i < stageIdx ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  : i === stageIdx ? <div className="w-3.5 h-3.5 rounded-full border-2 border-shift-600 border-t-transparent animate-spin flex-shrink-0" />
-                  : <div className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 flex-shrink-0" />}
-                <span>{stage}</span>
-                {i === stageIdx && stageMessage && <span className="text-gray-400 truncate max-w-xs">— {stageMessage}</span>}
-              </div>
-            ))}
-          </div>
-          {jobIdRef.current && (
-            <p className="text-xs text-gray-300 mt-3 font-mono">Job: {jobIdRef.current}</p>
           )}
-        </div>
-      )}
 
-      {/* エラー */}
-      {error && (
-        <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-red-800">エラーが発生しました</p>
-            <p className="text-xs text-red-600 mt-0.5 break-all whitespace-pre-wrap">{error}</p>
-            <div className="flex gap-2 mt-3">
-              <button className="btn-secondary text-xs py-1.5" onClick={() => { setError(''); setShowDebug(false) }}>再試行</button>
-              <button className="btn-secondary text-xs py-1.5"
-                onClick={() => router.push(`/projects/${params.id}/test-items`)}>テスト項目書を確認</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* デバッグパネル */}
-      {(jobDebug || generating || error) && (
-        <div className="card border border-amber-200">
-          <button className="w-full flex items-center justify-between p-3 hover:bg-amber-50 transition-colors"
-            onClick={() => setShowDebug(!showDebug)}>
-            <div className="flex items-center gap-2">
-              <Bug className="w-4 h-4 text-amber-600" />
-              <span className="text-sm font-semibold text-amber-800">デバッグ情報</span>
-              {jobDebug && (
-                <span className={`text-xs px-2 py-0.5 rounded-full font-mono ${jobDebug.status === 'completed' ? 'bg-green-100 text-green-700' : jobDebug.status === 'error' ? 'bg-red-100 text-red-700' : jobDebug.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                  {jobDebug.status}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {jobDebug && (
-                <button onClick={e => { e.stopPropagation(); copyDebug() }}
-                  className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1">
-                  {copied ? <CheckCheck className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copied ? 'コピー済' : 'コピー'}
-                </button>
-              )}
-              {showDebug ? <ChevronUp className="w-4 h-4 text-amber-400" /> : <ChevronDown className="w-4 h-4 text-amber-400" />}
-            </div>
+          <button disabled={planning} onClick={runPlanning} className="btn-primary w-full justify-center py-4 text-base disabled:opacity-60">
+            {planning ? <><Loader2 className="w-5 h-5 animate-spin" />AIがテスト設計プランを立案中...</> : <><ClipboardList className="w-5 h-5" />テスト設計プランを立案する</>}
           </button>
-          {showDebug && (
-            <div className="border-t border-amber-200 p-4 space-y-4">
-              {jobDebug && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-600 mb-2">ジョブ状態</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    {[
-                      { label: 'Job ID',   value: jobIdRef.current || '-' },
-                      { label: 'Status',   value: jobDebug.status },
-                      { label: 'Stage',    value: String(jobDebug.stage) },
-                      { label: 'Message',  value: jobDebug.message },
-                      { label: 'Model',    value: jobDebug.model || '-' },
-                      { label: 'Count',    value: String(jobDebug.count ?? '-') },
-                      { label: 'Elapsed',  value: jobDebug.elapsed ? `${jobDebug.elapsed}s` : '-' },
-                      { label: 'Updated',  value: jobDebug.updatedAt ? new Date(jobDebug.updatedAt).toLocaleTimeString('ja-JP') : '-' },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="bg-gray-50 rounded p-2">
-                        <p className="text-gray-400 text-xs">{label}</p>
-                        <p className="text-gray-800 font-mono break-all">{value}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {jobDebug?.error && (
-                <div>
-                  <p className="text-xs font-semibold text-red-600 mb-2">エラー詳細</p>
-                  <pre className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 overflow-x-auto whitespace-pre-wrap break-all">
-                    {jobDebug.error}{jobDebug.debugError && `\n\nStack:\n${jobDebug.debugError}`}
-                  </pre>
-                </div>
-              )}
-              {jobDebug?.debugPrompt && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-600 mb-2">使用プロンプト（RAGチャンク: {jobDebug.debugPrompt.totalChunks}件）</p>
-                  <div className="space-y-2">
-                    <div>
-                      <p className="text-xs text-gray-400 mb-1">System Prompt</p>
-                      <pre className="bg-gray-900 text-green-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-40">{jobDebug.debugPrompt.system}</pre>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-400 mb-1">User Prompt</p>
-                      <pre className="bg-gray-900 text-blue-300 rounded-lg p-3 text-xs overflow-x-auto whitespace-pre-wrap max-h-60">{jobDebug.debugPrompt.user}</pre>
-                    </div>
-                  </div>
-                </div>
-              )}
+
+          {planning && (
+            <div className="card p-5 animate-fade-in">
+              <div className="flex items-center gap-3 text-shift-700">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <div><p className="font-semibold text-sm">仕様書を分析してプランを立案中...</p><p className="text-xs text-gray-500 mt-0.5">RAG検索 → プロンプト構築 → LLMによる設計計画の生成（30〜60秒程度）</p></div>
+              </div>
             </div>
           )}
-        </div>
+        </>
       )}
 
-      {/* 完了 */}
-      {done && (
-        <div className={`card p-6 text-center animate-slide-up ${isPartial ? 'border border-amber-300' : ''}`}>
-          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isPartial ? 'bg-amber-100' : 'bg-green-100'}`}>
-            {isPartial
-              ? <AlertTriangle className="w-8 h-8 text-amber-600" />
-              : <CheckCircle2 className="w-8 h-8 text-green-600" />}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* STEP 2: プラン確認・実行 */}
+      {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {step === 'execute' && plan && (
+        <>
+          {/* プラン概要カード */}
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div>
+                <h2 className="font-semibold text-gray-900">テスト設計プラン</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  合計 <strong className="text-shift-700">{totalPlanItems}</strong> 件 / {plan.batches.length} バッチ /
+                  プランモデル: <span className="font-mono text-gray-600">{plan.planModelId}</span>
+                  {plan.ragBreakdown && (
+                    <span className="ml-2 text-gray-400">
+                      RAG: Doc={plan.ragBreakdown.doc} Site={plan.ragBreakdown.site} Src={plan.ragBreakdown.src}
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowPlanEditor(true)} className="btn-secondary text-xs py-1.5 flex items-center gap-1.5"><Edit3 className="w-3.5 h-3.5" />編集</button>
+                <button onClick={() => { setStep('plan'); setPlan(null); setExecDone(false) }} className="btn-secondary text-xs py-1.5 flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" />再立案</button>
+              </div>
+            </div>
+
+            <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
+              {plan.batches.map((batch, i) => (
+                <div key={i} className={`px-4 py-3 transition-colors ${executing && currentBatch === i + 1 ? 'bg-shift-50' : 'hover:bg-gray-50'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400 font-mono w-16 flex-shrink-0">Batch {batch.batchId}</span>
+                    <span className="font-medium text-gray-800 text-sm flex-1">{batch.category}</span>
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex-shrink-0">{batch.perspective}</span>
+                    <span className="text-xs text-gray-500 flex-shrink-0 w-10 text-right">{batch.titles.length}件</span>
+                    <div className="w-5 flex-shrink-0">
+                      {executing && currentBatch === i + 1 && <Loader2 className="w-3.5 h-3.5 text-shift-600 animate-spin" />}
+                      {(execDone || (executing && currentBatch > i + 1)) && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                    </div>
+                  </div>
+                  <div className="mt-1 ml-20 space-y-0.5">
+                    {batch.titles.slice(0, 2).map((t, ti) => <p key={ti} className="text-xs text-gray-400 truncate">• {t}</p>)}
+                    {batch.titles.length > 2 && <p className="text-xs text-gray-300">... 他 {batch.titles.length - 2} 件</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">
-            {isPartial ? '途中保存で完了' : '生成完了！'}
-          </h3>
-          <p className="text-sm text-gray-600 mb-1">{resultCount.toLocaleString()}件のテスト項目を生成しました</p>
-          {isPartial && (
-            <div className="my-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 text-left">
-              <p className="font-semibold flex items-center gap-1 mb-1">
-                <AlertTriangle className="w-3.5 h-3.5" /> 60秒タイムアウトにより途中で打ち切りました
-              </p>
-              <p>生成できた分（{resultCount}件）は保存されています。</p>
-              <p className="mt-1">より多く生成したい場合は <span className="font-mono bg-amber-100 px-1 rounded">⚡ 爆速</span> モデルを選択してください。</p>
+
+          {/* 実行モデル選択 */}
+          <ModelSelector label="② 実行用AIモデル（テスト項目詳細の生成）"
+            selectedId={execModelId} customModel={execCustomModel} useCustom={useExecCustom}
+            onSelect={id => { setExecModelId(id); setUseExecCustom(false) }}
+            onCustomChange={setExecCustomModel} onUseCustom={() => setUseExecCustom(true)} />
+
+          {/* 実行RAG設定 */}
+          <div className="card p-4">
+            <p className="text-xs font-semibold text-gray-500 mb-3">RAG取得チャンク数（実行用）</p>
+            <div className="space-y-2">
+              {[{ label: '📄 ドキュメント', key: 'doc' as const, max: 200 }, { label: '🌐 サイト構造', key: 'site' as const, max: 100 }, { label: '💻 ソースコード', key: 'src' as const, max: 200 }].map(({ label, key, max }) => (
+                <div key={key} className="flex items-center gap-3">
+                  <span className="w-28 text-xs text-gray-600 flex-shrink-0">{label}</span>
+                  <input type="range" min={0} max={max} step={10} value={execRagTopK[key]} onChange={e => setExecRagTopK(prev => ({ ...prev, [key]: Number(e.target.value) }))} className="flex-1 accent-shift-700" />
+                  <input type="number" min={0} max={max} value={execRagTopK[key]} onChange={e => setExecRagTopK(prev => ({ ...prev, [key]: Number(e.target.value) }))} className="input py-1 w-16 text-xs text-right" />
+                  <span className="text-xs text-gray-400">件</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {execError && (
+            <div className="card p-4 border border-red-200 bg-red-50 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div><p className="text-sm font-semibold text-red-800">エラーが発生しました</p><p className="text-xs text-red-600 mt-0.5 whitespace-pre-wrap">{execError}</p>
+                <button onClick={() => setExecError('')} className="btn-secondary text-xs py-1.5 mt-2">再試行</button>
+              </div>
             </div>
           )}
-          {jobDebug?.breakdown && (
-            <div className="flex justify-center gap-4 text-xs text-gray-500 mb-5">
-              <span>📄 Doc: {jobDebug.breakdown.documents}</span>
-              <span>🌐 Site: {jobDebug.breakdown.siteAnalysis}</span>
-              <span>💻 Src: {jobDebug.breakdown.sourceCode}</span>
-              {jobDebug.elapsed && <span>⏱ {jobDebug.elapsed}s</span>}
+
+          {/* 実行進捗 */}
+          {executing && (
+            <div className="card p-6 animate-fade-in">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2"><Loader2 className="w-5 h-5 text-shift-600 animate-spin" /><span className="font-semibold text-gray-900 text-sm">テスト項目を生成中...</span></div>
+                <span className="text-lg font-bold text-shift-700">{progressPct}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
+                <div className="bg-gradient-to-r from-shift-700 to-shift-400 h-3 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-gray-50 rounded-lg p-2"><p className="text-xs text-gray-500">バッチ</p><p className="font-bold text-shift-700">{currentBatch} / {totalBatches}</p></div>
+                <div className="bg-gray-50 rounded-lg p-2"><p className="text-xs text-gray-500">生成済み</p><p className="font-bold text-green-600">{totalGenerated} 件</p></div>
+                <div className="bg-gray-50 rounded-lg p-2"><p className="text-xs text-gray-500">目標</p><p className="font-bold text-gray-700">{totalPlanItems} 件</p></div>
+              </div>
+              {currentBatchLabel && <p className="text-xs text-gray-400 mt-3 text-center"><span className="bg-gray-100 rounded px-2 py-0.5">{currentBatchLabel}</span></p>}
             </div>
           )}
-          <div className="flex gap-3 justify-center">
-            <button className="btn-secondary" onClick={() => { setDone(false); setProgress(0); progressRef.current = 0 }}>
-              再生成する
+
+          {/* 完了 */}
+          {execDone && (
+            <div className={`card p-6 text-center animate-slide-up ${isPartial ? 'border border-amber-300' : ''}`}>
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isPartial ? 'bg-amber-100' : 'bg-green-100'}`}>
+                {isPartial ? <AlertTriangle className="w-8 h-8 text-amber-600" /> : <CheckCircle2 className="w-8 h-8 text-green-600" />}
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-1">{isPartial ? '途中保存で完了' : '生成完了！'}</h3>
+              <p className="text-sm text-gray-600 mb-4">{totalGenerated}件のテスト項目を生成しました</p>
+              <div className="flex gap-3 justify-center">
+                <button className="btn-secondary" onClick={() => { setExecDone(false); setTotalGenerated(0); setCurrentBatch(0) }}>再実行</button>
+                <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>テスト項目書を確認</button>
+              </div>
+            </div>
+          )}
+
+          {!executing && !execDone && (
+            <button onClick={runExecution} className="btn-primary w-full justify-center py-4 text-base">
+              <Play className="w-5 h-5" />{plan.batches.length}バッチ・{totalPlanItems}件のテスト項目を生成する
             </button>
-            <button className="btn-primary" onClick={() => router.push(`/projects/${params.id}/test-items`)}>
-              テスト項目書を確認
-            </button>
-          </div>
-        </div>
+          )}
+        </>
       )}
+
+      {showPlanEditor && plan && <PlanEditor plan={plan} onSave={savePlan} onClose={() => setShowPlanEditor(false)} />}
     </div>
   )
 }

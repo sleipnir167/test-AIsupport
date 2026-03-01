@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis'
-import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings } from '@/types'
+import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings, TestPlan } from '@/types'
 
 export const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
@@ -14,6 +14,7 @@ const KEY = {
   testList:      (projectId: string) => `project:${projectId}:testitems`,
   testItem:      (id: string)        => `testitem:${id}`,
   siteAnalysis:  (projectId: string) => `project:${projectId}:siteanalysis`,
+  testPlan:      (projectId: string) => `project:${projectId}:testplan`,
 }
 
 // ─── プロジェクト ────────────────────────────────────────────
@@ -239,4 +240,19 @@ export async function getAdminSettings(): Promise<AdminSettings> {
 export async function saveAdminSettings(settings: Partial<AdminSettings>): Promise<void> {
   const current = await getAdminSettings()
   await redis.set(LOG_KEY.settings, { ...current, ...settings, updatedAt: new Date().toISOString() })
+}
+
+// ─── テストプラン ──────────────────────────────────────────────
+const PLAN_TTL = 60 * 60 * 24 * 7 // 7日
+
+export async function getTestPlan(projectId: string): Promise<TestPlan | null> {
+  return redis.get<TestPlan>(KEY.testPlan(projectId))
+}
+
+export async function saveTestPlan(plan: TestPlan): Promise<void> {
+  await redis.set(KEY.testPlan(plan.projectId), { ...plan, updatedAt: new Date().toISOString() }, { ex: PLAN_TTL })
+}
+
+export async function deleteTestPlan(projectId: string): Promise<void> {
+  await redis.del(KEY.testPlan(projectId))
 }

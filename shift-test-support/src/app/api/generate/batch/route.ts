@@ -1,9 +1,15 @@
+/**
+ * POST /api/generate/batch
+ *
+ * プランのバッチ1件を受け取り、詳細なテスト項目を生成して保存する（LLM②）
+ * フロントエンドがtotalBatches回呼び出す。
+ */
 import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
-import { buildPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
+import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
 import OpenAI from 'openai'
-import type { PageInfo } from '@/types'
+import type { TestPlanBatch } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
 export const maxDuration = 60
@@ -36,34 +42,47 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
   }
 }
 
-// トークン概算（英語4文字≒1トークン、日本語1文字≒1トークン）
 function estimateTokens(text: string): number {
   const japanese = (text.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length
-  const other = text.length - japanese
-  return Math.ceil(japanese + other / 4)
+  return Math.ceil(japanese + (text.length - japanese) / 4)
 }
 
 export async function POST(req: Request) {
   const startedAt = Date.now()
   const body = await req.json()
   const {
-    jobId, projectId, batchNum, totalBatches, batchSize, alreadyCount,
-    perspectives, perspectiveWeights, targetPages = null, modelOverride,
+    jobId,
+    projectId,
+    batchNum,
+    totalBatches,
+    alreadyCount,
+    planBatch,
+    batchSize,
+    perspectives,
+    perspectiveWeights,
+    targetPages = null,
+    modelOverride,
     ragTopK = { doc: 100, site: 40, src: 100 },
   }: {
-    jobId: string; projectId: string; batchNum: number; totalBatches: number
-    batchSize: number; alreadyCount: number; perspectives?: string[]
+    jobId: string
+    projectId: string
+    batchNum: number
+    totalBatches: number
+    alreadyCount: number
+    planBatch?: TestPlanBatch
+    batchSize?: number
+    perspectives?: string[]
     perspectiveWeights?: Array<{ value: string; count: number }>
-    targetPages: PageInfo[] | null; modelOverride?: string
+    targetPages?: Array<{ url: string; title: string }> | null
+    modelOverride?: string
     ragTopK?: { doc: number; site: number; src: number }
   } = body
 
-  log(jobId, `batch ${batchNum}/${totalBatches} size=${batchSize} already=${alreadyCount}`)
+  log(jobId, `batch ${batchNum}/${totalBatches} planBatch=${!!planBatch} already=${alreadyCount}`)
 
   const project = await getProject(projectId)
   if (!project) return NextResponse.json({ error: 'project not found' }, { status: 404 })
 
-  // 管理設定・プロンプトテンプレートを取得
   const [adminSettings, promptTemplate] = await Promise.all([
     getAdminSettings(),
     getPromptTemplate(),
@@ -72,10 +91,15 @@ export async function POST(req: Request) {
   try {
     await updateJob(jobId, {
       stage: 2,
-      message: `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済)`,
+      message: planBatch
+        ? `AI生成中... (バッチ ${batchNum}/${totalBatches}: ${planBatch.category} / ${planBatch.perspective} / ${alreadyCount}件生成済)`
+        : `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済)`,
     })
 
-    const baseQuery = `${project.targetSystem} テスト項目 機能 要件 画面 操作 入力 エラー`
+    // RAGクエリをプランのカテゴリ・観点に特化させる
+    const baseQuery = planBatch
+      ? `${project.targetSystem} ${planBatch.category} ${planBatch.perspective} テスト 要件 画面 操作`
+      : `${project.targetSystem} テスト項目 機能 要件 画面 操作 入力 エラー`
     const pageQuery = targetPages?.length
       ? `${baseQuery} ${targetPages.map(p => p.title).join(' ')}`
       : baseQuery
@@ -85,7 +109,7 @@ export async function POST(req: Request) {
       searchChunks(pageQuery, projectId, ragTopK.site, 'site_analysis'),
       searchChunks(pageQuery, projectId, ragTopK.src, 'source_code'),
     ])
-    log(jobId, `RAG topK=(doc:${ragTopK.doc},site:${ragTopK.site},src:${ragTopK.src}) results=(doc:${docChunks.length} site:${siteChunks.length} src:${sourceChunks.length})`)
+    log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
 
     const seenIds = new Set<string>()
     const allChunks = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
@@ -95,13 +119,37 @@ export async function POST(req: Request) {
       return true
     })
 
-    const result: BuildPromptsResult = buildPrompts(
-      project.name, project.targetSystem, allChunks,
-      {
-        maxItems: batchSize, perspectives, perspectiveWeights, targetPages,
-        customSystemPrompt: promptTemplate.systemPrompt,
-      }
-    )
+    let result: BuildPromptsResult
+    if (planBatch) {
+      result = buildBatchFromPlanPrompts(
+        project.name,
+        project.targetSystem,
+        allChunks,
+        {
+          batchId: batchNum,
+          totalBatches,
+          category: planBatch.category,
+          perspective: planBatch.perspective,
+          titles: planBatch.titles,
+          customSystemPrompt: promptTemplate.systemPrompt,
+        }
+      )
+    } else {
+      const { buildPrompts } = await import('@/lib/ai')
+      result = buildPrompts(
+        project.name,
+        project.targetSystem,
+        allChunks,
+        {
+          maxItems: batchSize ?? 50,
+          perspectives,
+          perspectiveWeights,
+          targetPages,
+          customSystemPrompt: promptTemplate.systemPrompt,
+        }
+      )
+    }
+
     const { systemPrompt, userPrompt, refMap } = result
     log(jobId, `Prompt: system=${systemPrompt.length}c user=${userPrompt.length}c`)
 
@@ -160,7 +208,9 @@ export async function POST(req: Request) {
           const elapsed = Math.round((Date.now() - startedAt) / 1000)
           await updateJob(jobId, {
             stage: 2,
-            message: `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済 / ${charCount}文字 / ${elapsed}秒)`,
+            message: planBatch
+              ? `AI生成中... (バッチ ${batchNum}/${totalBatches}: ${planBatch.category} / ${charCount}文字 / ${elapsed}秒)`
+              : `AI生成中... (バッチ ${batchNum}/${totalBatches} / ${alreadyCount}件生成済 / ${charCount}文字 / ${elapsed}秒)`,
           })
           lastKvUpdate = charCount
         }
@@ -179,13 +229,16 @@ export async function POST(req: Request) {
     const items = parseTestItems(fullContent, projectId, refMap ?? [])
     log(jobId, `Parsed: ${items.length} items`)
 
-    if (items.length > 0) {
-      await saveTestItems(items)
+    const itemsWithOrder = items.map((item, i) => ({
+      ...item,
+      orderIndex: alreadyCount + i,
+    }))
+
+    if (itemsWithOrder.length > 0) {
+      await saveTestItems(itemsWithOrder)
     }
 
     const elapsedMs = Date.now() - startedAt
-
-    // ── AIログ保存 ──────────────────────────────────────────
     const sysTokens = estimateTokens(systemPrompt)
     const userTokens = estimateTokens(userPrompt)
     const respTokens = estimateTokens(fullContent)
@@ -202,7 +255,7 @@ export async function POST(req: Request) {
       systemPrompt: systemPrompt.slice(0, 3000),
       userPrompt: userPrompt.slice(0, 4000),
       responseText: fullContent.slice(0, 2000),
-      outputItemCount: items.length,
+      outputItemCount: itemsWithOrder.length,
       aborted,
       systemTokensEst: sysTokens,
       userTokensEst: userTokens,
@@ -214,8 +267,12 @@ export async function POST(req: Request) {
     })
 
     return NextResponse.json({
-      ok: true, count: items.length, aborted, elapsed: Math.round(elapsedMs / 1000), model,
-      ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length }
+      ok: true,
+      count: itemsWithOrder.length,
+      aborted,
+      elapsed: Math.round(elapsedMs / 1000),
+      model,
+      ragBreakdown: { doc: docChunks.length, site: siteChunks.length, src: sourceChunks.length },
     })
 
   } catch (e) {
