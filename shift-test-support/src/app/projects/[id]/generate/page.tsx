@@ -19,7 +19,7 @@ const ALL_PERSPECTIVES = ['機能テスト','正常系','異常系','境界値',
 const PERSPECTIVE_OPTIONS = ALL_PERSPECTIVES.map(v => ({ label: v, value: v }))
 
 // モデル一覧は管理者設定から動的に取得する。フォールバック用デフォルト値。
-const DEFAULT_MODEL_OPTIONS: CustomModelEntry[] = [
+const MODEL_OPTIONS: CustomModelEntry[] = [
   { id:'deepseek/deepseek-v3.2',           label:'DeepSeek V3.2',          inputCost:'$0.20', outputCost:'$0.35',  feature:'最安クラス。出力量が多いならこれ一択',  speed:'高速' },
   { id:'google/gemini-2.5-flash',          label:'Gemini 2.5 Flash',        inputCost:'$0.15', outputCost:'$0.60',  feature:'最新Gemini。高精度かつ爆速',          speed:'爆速' },
   { id:'google/gemini-3-flash-preview',    label:'Gemini 3 Flash Preview',  inputCost:'$0.10', outputCost:'$0.40',  feature:'Gemini最新プレビュー。爆速で大量生成', speed:'爆速' },
@@ -243,7 +243,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [useExecCustom, setUseExecCustom] = useState(false)
   const [execRagTopK, setExecRagTopK] = useState({doc:100,site:40,src:100})
   // 管理者設定から取得したモデル一覧
-  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(DEFAULT_MODEL_OPTIONS)
+  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(MODEL_OPTIONS)
   // バッチごとのabort警告メッセージ
   const [abortWarnings, setAbortWarnings] = useState<string[]>([])
   // まとめ実行: チェックされたバッチIDセット（null = 全選択モード）
@@ -287,7 +287,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       if(s.customModelList && s.customModelList.length > 0) setAdminModelList(s.customModelList)
       // バッチサイズ初期値を適用
       if(s.defaultBatchSize) setBatchSize(s.defaultBatchSize)
-      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : DEFAULT_MODEL_OPTIONS
+      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : MODEL_OPTIONS
       if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!modelList.find(m=>m.id===s.defaultPlanModelId)) }
       if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!modelList.find(m=>m.id===s.defaultExecModelId)) }
     }).catch(()=>{})
