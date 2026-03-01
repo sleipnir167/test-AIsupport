@@ -300,7 +300,7 @@ JSON形式のみ出力（コードブロック不要）:
       }
     }
     // AIがスコアを返さなかった場合のフォールバック（旧ロジック）
-    const has = (v: string) => perspectives.includes(v) ? 1 : 0
+    const has = (v: string) => perspectives.includes(v as any) ? 1 : 0
     const ps = (has('正常系') + has('異常系') + has('セキュリティ') + has('境界値') + has('性能')) / 5
     return {
       filename: f.filename, itemCount: f.items.length,
