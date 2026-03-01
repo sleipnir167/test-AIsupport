@@ -237,7 +237,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [ragTopK, setRagTopK] = useState({doc:80,site:30,src:50})
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  const [execModelId, setExecModelId] = useState(MODEL_OPTIONS.find(m=>m.isDefault)!.id)
+  const [execModelId, setExecModelId] = useState(MODEL_OPTIONS[0]?.id || '')
   const [execCustomModel, setExecCustomModel] = useState('')
   const [useExecCustom, setUseExecCustom] = useState(false)
   const [execRagTopK, setExecRagTopK] = useState({doc:100,site:40,src:100})
