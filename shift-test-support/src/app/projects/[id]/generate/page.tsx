@@ -228,7 +228,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   const [totalItems, setTotalItems] = useState(100)
   const [batchSize, setBatchSize] = useState(50)
-  const [planModelId, setPlanModelId] = useState(MODEL_OPTIONS.find(m=>m.isDefault)!.id)
+  const [planModelId, setPlanModelId] = useState(MODEL_OPTIONS[0]?.id || '')
   const [planCustomModel, setPlanCustomModel] = useState('')
   const [usePlanCustom, setUsePlanCustom] = useState(false)
   const [perspectiveMode, setPerspectiveMode] = useState<'ai'|'weighted'>('ai')
