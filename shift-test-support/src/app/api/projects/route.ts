@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getProjects, saveProject } from '@/lib/db'
@@ -36,8 +38,6 @@ export async function POST(req: Request) {
       documentCount: 0,
       createdAt: now,
       updatedAt: now,
-      hasUrlAnalysis: false,
-      hasSourceCode: false,
     }
 
     await saveProject(userId, project)

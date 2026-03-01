@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getSiteAnalysis, saveSiteAnalysis, deleteSiteAnalysis, getProject, updateProject } from '@/lib/db'
@@ -121,7 +123,7 @@ async function crawlSite(baseUrl: URL, maxDepth: number, maxPages: number): Prom
       const timeout = setTimeout(() => controller.abort(), 8000)
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'MSOKTestSupport/1.0 (site analysis bot)' }
+        headers: { 'User-Agent': 'ShiftTestSupport/1.0 (site analysis bot)' }
       })
       clearTimeout(timeout)
 

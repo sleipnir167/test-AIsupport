@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { getProject, updateProject, deleteProject } from '@/lib/db'
 import { getCurrentUserId } from '@/lib/auth'
