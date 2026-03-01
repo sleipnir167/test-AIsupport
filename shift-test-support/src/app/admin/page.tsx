@@ -5,7 +5,8 @@ import {
   Eye, EyeOff, CheckCircle2, AlertTriangle, Sliders,
   TerminalSquare, ChevronDown, ChevronUp, Info, Shield,
   Monitor, MessageSquare, Type, ToggleLeft, ToggleRight,
-  Plus, Trash2, RefreshCw
+  Plus, Trash2, RefreshCw,
+  Edit3
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AdminSettings, PromptTemplate, CustomModelEntry } from '@/types'
