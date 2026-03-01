@@ -73,4 +73,4 @@ export default function ProjectSidebar({ projectId, projectName }: SidebarProps)
     </aside>
   )
 }
-}
+
