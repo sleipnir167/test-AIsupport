@@ -38,6 +38,8 @@ export async function POST(req: Request) {
       documentCount: 0,
       createdAt: now,
       updatedAt: now,
+　　　 hasUrlAnalysis: false,
+      hasSourceCode: false,
     }
 
     await saveProject(userId, project)
