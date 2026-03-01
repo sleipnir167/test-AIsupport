@@ -89,7 +89,9 @@ export interface TestItem {
   automatable: Automatable
   orderIndex: number
   isDeleted: boolean
-  sourceRefs?: SourceRef[]  // 出典情報（AIが参照したドキュメント）
+  sourceRefs?: SourceRef[]    // 出典情報（AIが参照したドキュメント）
+  priorityReason?: string     // 優先度の判定根拠（AI生成時に付与）
+  automatableReason?: string  // 自動化可否の判定根拠（AI生成時に付与）
 }
 
 // ユーザー

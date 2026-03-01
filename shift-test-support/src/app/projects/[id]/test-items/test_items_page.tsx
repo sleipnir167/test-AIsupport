@@ -170,9 +170,10 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
 }
 
 // ─── 優先度・自動化モーダル ────────────────────────────────────
-function MetaReasonModal({ type, value, onClose }: {
+function MetaReasonModal({ type, value, aiReason, onClose }: {
   type: 'priority' | 'automatable'
   value: Priority | Automatable
+  aiReason?: string   // AI が付与した個別根拠
   onClose: () => void
 }) {
   const info = type === 'priority'
@@ -202,8 +203,18 @@ function MetaReasonModal({ type, value, onClose }: {
         </div>
         {/* Body */}
         <div className="overflow-y-auto p-5 space-y-4 max-h-[60vh]">
+          {/* AI根拠（個別） */}
+          {aiReason && (
+            <div className="bg-shift-50 border border-shift-200 rounded-xl p-4 flex items-start gap-2">
+              <BookOpen className="w-4 h-4 text-shift-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-shift-700 mb-1">🤖 AIによるこの項目への判定根拠</p>
+                <p className="text-sm text-shift-900 leading-relaxed">{aiReason}</p>
+              </div>
+            </div>
+          )}
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">📋 判定基準</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">📋 一般的な判定基準</p>
             <ul className="space-y-1.5">
               {info.criteria.map((c, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
@@ -277,7 +288,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
   const [editDraft, setEditDraft] = useState<Partial<TestItem>>({})
   const [saving, setSaving] = useState(false)
   const [sourceModalItem, setSourceModalItem] = useState<TestItem | null>(null)
-  const [metaModal, setMetaModal] = useState<{ type: 'priority' | 'automatable'; value: Priority | Automatable } | null>(null)
+  const [metaModal, setMetaModal] = useState<{ type: 'priority' | 'automatable'; value: Priority | Automatable; aiReason?: string } | null>(null)
 
   const fetchItems = async () => {
     try {
@@ -355,7 +366,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
     <div className="animate-fade-in space-y-4">
       {/* モーダル群 */}
       {sourceModalItem && <SourceRefModal item={sourceModalItem} onClose={() => setSourceModalItem(null)} />}
-      {metaModal && <MetaReasonModal type={metaModal.type} value={metaModal.value} onClose={() => setMetaModal(null)} />}
+      {metaModal && <MetaReasonModal type={metaModal.type} value={metaModal.value} aiReason={metaModal.aiReason} onClose={() => setMetaModal(null)} />}
 
       <div className="flex items-center justify-between">
         <div>
@@ -516,14 +527,14 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                               <td className="text-center">
                                 <ClickableBadge
                                   className={priorityColors[item.priority]}
-                                  onClick={() => setMetaModal({ type: 'priority', value: item.priority })}>
+                                  onClick={() => setMetaModal({ type: 'priority', value: item.priority, aiReason: item.priorityReason })}>
                                   {priorityLabels[item.priority]}
                                 </ClickableBadge>
                               </td>
                               <td className="text-center">
                                 <ClickableBadge
                                   className={automatableColors[item.automatable]}
-                                  onClick={() => setMetaModal({ type: 'automatable', value: item.automatable })}>
+                                  onClick={() => setMetaModal({ type: 'automatable', value: item.automatable, aiReason: item.automatableReason })}>
                                   {automatableLabels[item.automatable]}
                                 </ClickableBadge>
                               </td>

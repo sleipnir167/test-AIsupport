@@ -119,7 +119,9 @@ ${refMapSummary}
     "steps": ["手順1", "手順2", "手順3"],
     "expectedResult": "期待結果",
     "priority": "HIGH または MEDIUM または LOW",
+    "priorityReason": "優先度をこの値にした根拠（40文字以内）",
     "automatable": "YES または NO または CONSIDER",
+    "automatableReason": "自動化可否をこの値にした根拠（40文字以内）",
     "sourceRefs": [
       {
         "refId": "REF-1",
@@ -185,7 +187,9 @@ export function parseTestItems(
     steps: string[]
     expectedResult: string
     priority: string
+    priorityReason?: string
     automatable: string
+    automatableReason?: string
     sourceRefs?: Array<{ refId: string; reason: string }>
   }>
 
@@ -236,7 +240,9 @@ export function parseTestItems(
       steps: Array.isArray(item.steps) ? item.steps : [String(item.steps || '')],
       expectedResult: item.expectedResult || '',
       priority: (['HIGH', 'MEDIUM', 'LOW'].includes(item.priority) ? item.priority : 'MEDIUM') as TestItem['priority'],
+      priorityReason: item.priorityReason || undefined,
       automatable: (['YES', 'NO', 'CONSIDER'].includes(item.automatable) ? item.automatable : 'CONSIDER') as TestItem['automatable'],
+      automatableReason: item.automatableReason || undefined,
       orderIndex: 0,
       isDeleted: false,
       sourceRefs: sourceRefs.length > 0 ? sourceRefs : undefined,
@@ -453,7 +459,9 @@ ${titleList}
     "steps": ["手順1", "手順2", "手順3"],
     "expectedResult": "期待結果（具体的に）",
     "priority": "HIGH または MEDIUM または LOW",
+    "priorityReason": "優先度をこの値にした根拠（40文字以内）",
     "automatable": "YES または NO または CONSIDER",
+    "automatableReason": "自動化可否をこの値にした根拠（40文字以内）",
     "sourceRefs": [
       {
         "refId": "REF-1",

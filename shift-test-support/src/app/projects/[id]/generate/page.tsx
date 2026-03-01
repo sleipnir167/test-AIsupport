@@ -1,10 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   CheckCircle2, AlertCircle, Settings,
   ChevronDown, ChevronUp, Loader2, Globe, FileText, Code2,
-  ClipboardList, Play, Edit3, Trash2, Plus, ChevronRight, RotateCcw, AlertTriangle, X, Save
+  ClipboardList, Play, Edit3, Trash2, Plus, ChevronRight, RotateCcw, AlertTriangle, X, Save,
+  CheckSquare, Square, Zap, ListChecks
 } from 'lucide-react'
 import type { SiteAnalysis, TestPlan, TestPlanBatch, CustomModelEntry } from '@/types'
 import { TEST_PHASE_DESCRIPTIONS, TEST_PHASE_PERSPECTIVES } from '@/types'
@@ -18,7 +19,7 @@ const ALL_PERSPECTIVES = ['機能テスト','正常系','異常系','境界値',
 const PERSPECTIVE_OPTIONS = ALL_PERSPECTIVES.map(v => ({ label: v, value: v }))
 
 // モデル一覧は管理者設定から動的に取得する。フォールバック用デフォルト値。
-const MODEL_OPTIONS: CustomModelEntry[] = [
+const DEFAULT_MODEL_OPTIONS: CustomModelEntry[] = [
   { id:'deepseek/deepseek-v3.2',           label:'DeepSeek V3.2',          inputCost:'$0.20', outputCost:'$0.35',  feature:'最安クラス。出力量が多いならこれ一択',  speed:'高速' },
   { id:'google/gemini-2.5-flash',          label:'Gemini 2.5 Flash',        inputCost:'$0.15', outputCost:'$0.60',  feature:'最新Gemini。高精度かつ爆速',          speed:'爆速' },
   { id:'google/gemini-3-flash-preview',    label:'Gemini 3 Flash Preview',  inputCost:'$0.10', outputCost:'$0.40',  feature:'Gemini最新プレビュー。爆速で大量生成', speed:'爆速' },
@@ -228,7 +229,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
 
   const [totalItems, setTotalItems] = useState(100)
   const [batchSize, setBatchSize] = useState(50)
-  const [planModelId, setPlanModelId] = useState(MODEL_OPTIONS[0]?.id || '')
+  const [planModelId, setPlanModelId] = useState(MODEL_OPTIONS.find(m=>m.isDefault)!.id)
   const [planCustomModel, setPlanCustomModel] = useState('')
   const [usePlanCustom, setUsePlanCustom] = useState(false)
   const [perspectiveMode, setPerspectiveMode] = useState<'ai'|'weighted'>('ai')
@@ -237,14 +238,20 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   const [ragTopK, setRagTopK] = useState({doc:80,site:30,src:50})
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  const [execModelId, setExecModelId] = useState(MODEL_OPTIONS[0]?.id || '')
+  const [execModelId, setExecModelId] = useState(MODEL_OPTIONS.find(m=>m.isDefault)!.id)
   const [execCustomModel, setExecCustomModel] = useState('')
   const [useExecCustom, setUseExecCustom] = useState(false)
   const [execRagTopK, setExecRagTopK] = useState({doc:100,site:40,src:100})
   // 管理者設定から取得したモデル一覧
-  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(MODEL_OPTIONS)
+  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(DEFAULT_MODEL_OPTIONS)
   // バッチごとのabort警告メッセージ
   const [abortWarnings, setAbortWarnings] = useState<string[]>([])
+  // まとめ実行: チェックされたバッチIDセット（null = 全選択モード）
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number> | null>(null)
+  // まとめ実行: 1回のバッチ呼び出しにまとめる件数上限
+  const [mergeCount, setMergeCount] = useState(150)
+  // まとめ実行モードが有効かどうか
+  const [bulkMode, setBulkMode] = useState(false)
 
   const [plan, setPlan] = useState<TestPlan|null>(null)
   const [showPlanEditor, setShowPlanEditor] = useState(false)
@@ -276,11 +283,11 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       defaultPlanModelId?:string; defaultExecModelId?:string; labelGenerateButton?:string
       customModelList?: CustomModelEntry[]; defaultBatchSize?: number
     })=>{
-      // モデルリストを管理者設定から上書き（空なら MODEL_OPTIONS を維持）
+      // モデルリストを管理者設定から上書き（空なら DEFAULT_MODEL_OPTIONS を維持）
       if(s.customModelList && s.customModelList.length > 0) setAdminModelList(s.customModelList)
       // バッチサイズ初期値を適用
       if(s.defaultBatchSize) setBatchSize(s.defaultBatchSize)
-      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : MODEL_OPTIONS
+      const modelList = (s.customModelList && s.customModelList.length > 0) ? s.customModelList : DEFAULT_MODEL_OPTIONS
       if(s.defaultPlanModelId) { setPlanModelId(s.defaultPlanModelId); setUsePlanCustom(!modelList.find(m=>m.id===s.defaultPlanModelId)) }
       if(s.defaultExecModelId) { setExecModelId(s.defaultExecModelId); setUseExecCustom(!modelList.find(m=>m.id===s.defaultExecModelId)) }
     }).catch(()=>{})
@@ -318,7 +325,7 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
     setPlan(updated);setShowPlanEditor(false)
   }
 
-  const runExecution=async()=>{
+  const runExecution=async(useBulk=false)=>{
     if(!plan)return
     setExecuting(true);setExecError('');setExecDone(false);setTotalGenerated(0);setCurrentBatch(0);setIsPartial(false);setAbortWarnings([])
     try {
@@ -328,24 +335,49 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
       })
       const startData=await startRes.json()
       if(!startData.jobId)throw new Error(startData.error||'ジョブ開始に失敗しました')
-      const batches=plan.batches;setTotalBatches(batches.length)
+
+      // まとめ実行モード: bulkBatches を使う
+      // 通常モード: plan.batches をそのまま1件ずつ実行
+      const execBatches = useBulk ? bulkBatches : plan.batches.map(b => ({
+        batches: [b], titles: b.titles, categories: [b.category], perspectives: [b.perspective]
+      }))
+      setTotalBatches(execBatches.length)
       let generated=0;let aborted=false;let globalRefOffset=0
-      for(let i=0;i<batches.length;i++){
-        const batch=batches[i];setCurrentBatch(i+1);setCurrentBatchLabel(`${batch.category} / ${batch.perspective}`)
+
+      for(let i=0;i<execBatches.length;i++){
+        const eb = execBatches[i]
+        // まとめバッチ: 代表のcategory/perspectiveは最初のものを使う
+        const repCategory = eb.categories[0] ?? '生成中'
+        const repPerspective = eb.perspectives[0] ?? ''
+        setCurrentBatch(i+1)
+        setCurrentBatchLabel(
+          useBulk && eb.batches.length > 1
+            ? `${repCategory}ほか${eb.batches.length}バッチ（${eb.titles.length}件まとめ）`
+            : `${repCategory} / ${repPerspective}`
+        )
+        // まとめ実行では planBatch を複数バッチ分の titles を持つ合成バッチとして渡す
+        const planBatch = {
+          batchId: i+1,
+          category: repCategory,
+          perspective: useBulk && eb.batches.length > 1
+            ? eb.perspectives.join('・')
+            : repPerspective,
+          titles: eb.titles,
+          count: eb.titles.length,
+        }
         const batchRes=await fetch('/api/generate/batch',{
           method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
-            jobId:startData.jobId,projectId:params.id,batchNum:i+1,totalBatches:batches.length,
-            alreadyCount:generated,planBatch:batch,modelOverride:getExecModel(),
+            jobId:startData.jobId,projectId:params.id,batchNum:i+1,totalBatches:execBatches.length,
+            alreadyCount:generated,planBatch,modelOverride:getExecModel(),
             ragTopK:execRagTopK,
-            refOffset:globalRefOffset, // ★ グローバルREF番号オフセット（バッチをまたいで一意）
+            refOffset:globalRefOffset,
           }),
         })
         const batchData=await batchRes.json()
         if(!batchRes.ok||batchData.error)throw new Error(`バッチ${i+1}でエラー: ${batchData.error}`)
         const batchCount = batchData.count??0
         generated+=batchCount;setTotalGenerated(generated)
-        // REF番号オフセットを加算（次バッチのREF番号が前バッチと重複しないよう）
         globalRefOffset += batchCount
         if(batchData.aborted){
           aborted=true
@@ -367,6 +399,32 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
   }
 
   const totalPlanItems=plan?.batches.reduce((s,b)=>s+b.titles.length,0)??0
+
+  // まとめ実行用: 選択バッチを mergeCount 件ずつに束ねた「スーパーバッチ」一覧
+  const bulkBatches = useMemo(() => {
+    if (!plan) return []
+    const sourceBatches = bulkMode && selectedBatchIds
+      ? plan.batches.filter(b => selectedBatchIds.has(b.batchId))
+      : plan.batches
+    // titles をすべてフラット化してから mergeCount ずつに分割
+    const groups: Array<{ batches: typeof plan.batches; titles: string[]; categories: string[]; perspectives: string[] }> = []
+    let curTitles: string[] = []
+    let curBatches: typeof plan.batches = []
+    let curCats: string[] = []
+    let curPersps: string[] = []
+    for (const b of sourceBatches) {
+      curTitles.push(...b.titles)
+      curBatches.push(b)
+      curCats.push(b.category)
+      curPersps.push(b.perspective)
+      if (curTitles.length >= mergeCount) {
+        groups.push({ batches: curBatches, titles: curTitles, categories: curCats, perspectives: curPersps })
+        curTitles = []; curBatches = []; curCats = []; curPersps = []
+      }
+    }
+    if (curTitles.length > 0) groups.push({ batches: curBatches, titles: curTitles, categories: curCats, perspectives: curPersps })
+    return groups
+  }, [plan, bulkMode, selectedBatchIds, mergeCount])
   const progressPct=totalBatches>0?Math.round((currentBatch/totalBatches)*100):0
 
   return (
@@ -571,25 +629,101 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
                 <button onClick={()=>{setStep('plan');setPlan(null);setExecDone(false)}} className="btn-secondary text-xs py-1.5 flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5"/>再立案</button>
               </div>
             </div>
+
+            {/* ─── まとめ実行コントロール ─── */}
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={()=>{
+                      setBulkMode(m=>{
+                        if(!m) setSelectedBatchIds(new Set(plan.batches.map(b=>b.batchId)))
+                        else setSelectedBatchIds(null)
+                        return !m
+                      })
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${bulkMode?'bg-shift-700 text-white border-shift-700':'bg-white text-gray-600 border-gray-300 hover:border-shift-400'}`}>
+                    {bulkMode?<CheckSquare className="w-3.5 h-3.5"/>:<Square className="w-3.5 h-3.5"/>}
+                    まとめ実行モード
+                  </button>
+                  {bulkMode&&(
+                    <span className="text-xs text-gray-500">
+                      {selectedBatchIds?`${selectedBatchIds.size}バッチ選択中`:'全バッチ'} →
+                      <strong className="text-shift-700 mx-1">{bulkBatches.length}回</strong>のAPI呼び出しに圧縮
+                    </span>
+                  )}
+                </div>
+                {bulkMode&&(
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">1回あたりの上限件数:</span>
+                    {[100,150,200].map(v=>(
+                      <button key={v} onClick={()=>setMergeCount(v)}
+                        className={`px-2 py-1 rounded text-xs font-medium border transition-all ${mergeCount===v?'bg-shift-700 text-white border-shift-700':'bg-white text-gray-600 border-gray-200 hover:border-shift-400'}`}>{v}件</button>
+                    ))}
+                    <input type="number" min={50} max={500} value={mergeCount}
+                      onChange={e=>setMergeCount(Number(e.target.value))}
+                      className="input py-1 w-20 text-xs"/>
+                    <span className="text-xs text-amber-600">⚠️ 多すぎるとタイムアウトに注意</span>
+                  </div>
+                )}
+              </div>
+              {bulkMode&&selectedBatchIds&&(
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <button onClick={()=>setSelectedBatchIds(new Set(plan.batches.map(b=>b.batchId)))}
+                    className="text-xs text-shift-600 hover:underline flex items-center gap-0.5"><ListChecks className="w-3 h-3"/>全選択</button>
+                  <button onClick={()=>setSelectedBatchIds(new Set())}
+                    className="text-xs text-gray-400 hover:underline">全解除</button>
+                  <span className="text-xs text-gray-300">|</span>
+                  <span className="text-xs text-gray-500">チェックしたバッチのみ生成します</span>
+                </div>
+              )}
+            </div>
+
             <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
-              {plan.batches.map((batch,i)=>(
-                <div key={i} className={`px-4 py-3 transition-colors ${executing&&currentBatch===i+1?'bg-shift-50':'hover:bg-gray-50'}`}>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-400 font-mono w-16 flex-shrink-0">Batch {batch.batchId}</span>
-                    <span className="font-medium text-gray-800 text-sm flex-1">{batch.category}</span>
-                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex-shrink-0">{batch.perspective}</span>
-                    <span className="text-xs text-gray-500 flex-shrink-0 w-10 text-right">{batch.titles.length}件</span>
-                    <div className="w-5 flex-shrink-0">
-                      {executing&&currentBatch===i+1&&<Loader2 className="w-3.5 h-3.5 text-shift-600 animate-spin"/>}
-                      {(execDone||(executing&&currentBatch>i+1))&&<CheckCircle2 className="w-3.5 h-3.5 text-green-500"/>}
+              {plan.batches.map((batch,i)=>{
+                const isSelected = !bulkMode || !selectedBatchIds || selectedBatchIds.has(batch.batchId)
+                // このバッチがどのsuperBatchに属するか
+                const superIdx = bulkBatches.findIndex(sb=>sb.batches.some(b=>b.batchId===batch.batchId))
+                const isRunning = executing && bulkMode
+                  ? (superIdx>=0 && currentBatch===superIdx+1)
+                  : (executing&&currentBatch===i+1)
+                const isDone = execDone || (executing && (bulkMode ? superIdx < currentBatch-1 : currentBatch > i+1))
+                return (
+                  <div key={i} className={`px-4 py-3 transition-colors ${isRunning?'bg-shift-50':!isSelected?'opacity-40 bg-gray-50':'hover:bg-gray-50'}`}>
+                    <div className="flex items-center gap-3">
+                      {bulkMode&&selectedBatchIds&&(
+                        <button onClick={()=>{
+                          setSelectedBatchIds(prev=>{
+                            const n=new Set(prev)
+                            if(n.has(batch.batchId))n.delete(batch.batchId)
+                            else n.add(batch.batchId)
+                            return n
+                          })
+                        }} className="flex-shrink-0">
+                          {isSelected
+                            ?<CheckSquare className="w-4 h-4 text-shift-600"/>
+                            :<Square className="w-4 h-4 text-gray-300"/>}
+                        </button>
+                      )}
+                      <span className="text-xs text-gray-400 font-mono w-16 flex-shrink-0">Batch {batch.batchId}</span>
+                      <span className="font-medium text-gray-800 text-sm flex-1">{batch.category}</span>
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex-shrink-0">{batch.perspective}</span>
+                      <span className="text-xs text-gray-500 flex-shrink-0 w-10 text-right">{batch.titles.length}件</span>
+                      {bulkMode&&superIdx>=0&&(
+                        <span className="text-xs text-gray-400 font-mono flex-shrink-0">→API{superIdx+1}</span>
+                      )}
+                      <div className="w-5 flex-shrink-0">
+                        {isRunning&&<Loader2 className="w-3.5 h-3.5 text-shift-600 animate-spin"/>}
+                        {isDone&&<CheckCircle2 className="w-3.5 h-3.5 text-green-500"/>}
+                      </div>
+                    </div>
+                    <div className="mt-1 ml-20 space-y-0.5">
+                      {batch.titles.slice(0,2).map((t,ti)=><p key={ti} className="text-xs text-gray-400 truncate">• {t}</p>)}
+                      {batch.titles.length>2&&<p className="text-xs text-gray-300">... 他 {batch.titles.length-2} 件</p>}
                     </div>
                   </div>
-                  <div className="mt-1 ml-20 space-y-0.5">
-                    {batch.titles.slice(0,2).map((t,ti)=><p key={ti} className="text-xs text-gray-400 truncate">• {t}</p>)}
-                    {batch.titles.length>2&&<p className="text-xs text-gray-300">... 他 {batch.titles.length-2} 件</p>}
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -669,9 +803,31 @@ export default function GeneratePage({ params }: { params: { id: string } }) {
           )}
 
           {!executing&&!execDone&&(
-            <button onClick={runExecution} className="btn-primary w-full justify-center py-4 text-base">
-              <Play className="w-5 h-5"/>{plan.batches.length}バッチ・{totalPlanItems}件のテスト項目を生成する
-            </button>
+            <div className="space-y-2">
+              {bulkMode&&selectedBatchIds&&selectedBatchIds.size===0&&(
+                <div className="card p-3 border border-amber-200 bg-amber-50 text-amber-700 text-sm flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0"/>
+                  バッチが1件も選択されていません。チェックを入れてから実行してください。
+                </div>
+              )}
+              {bulkMode?(
+                <button
+                  onClick={()=>runExecution(true)}
+                  disabled={!!(selectedBatchIds&&selectedBatchIds.size===0)}
+                  className="btn-primary w-full justify-center py-4 text-base disabled:opacity-50">
+                  <Zap className="w-5 h-5"/>
+                  まとめ実行: {bulkBatches.length}回のAPI呼び出しで
+                  {selectedBatchIds?selectedBatchIds.size:plan.batches.length}バッチ・
+                  {selectedBatchIds
+                    ? plan.batches.filter(b=>selectedBatchIds.has(b.batchId)).reduce((s,b)=>s+b.titles.length,0)
+                    : totalPlanItems}件を生成する
+                </button>
+              ):(
+                <button onClick={()=>runExecution(false)} className="btn-primary w-full justify-center py-4 text-base">
+                  <Play className="w-5 h-5"/>{plan.batches.length}バッチ・{totalPlanItems}件のテスト項目を生成する
+                </button>
+              )}
+            </div>
           )}
         </>
       )}

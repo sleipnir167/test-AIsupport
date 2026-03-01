@@ -7,16 +7,11 @@ import {
   Map, BookOpen, Layers, Info, RefreshCw, CheckCircle2, MessageSquare
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import type { ReviewResult, ExcelCompareResult, DesignMeta, CoverageScore, TestItem, PerspectiveHeatmapCell } from '@/types'
+import type { ReviewResult, ExcelCompareResult, DesignMeta, CoverageScore, TestItem, PerspectiveHeatmapCell, CustomModelEntry } from '@/types'
 
-// ─── 生成タブと同じモデルリスト ─────────────────────────────
-// ─── 生成タブと同じモデルリスト（ラジオボタン表示用） ──────────
-interface ReviewModelOption {
-  id: string; label: string; inputCost: string; outputCost: string
-  feature: string; speed: '爆速' | '高速' | '標準'; isDefault?: boolean; isFree?: boolean
-}
-const ALL_MODELS: ReviewModelOption[] = [
-  { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速', isDefault: true },
+// ─── 生成タブと同じモデルリストを管理者設定から動的取得 ─────────
+const DEFAULT_REVIEW_MODELS: CustomModelEntry[] = [
+  { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速' },
   { id: 'google/gemini-2.5-flash',           label: 'Gemini 2.5 Flash',       inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',             speed: '爆速' },
   { id: 'google/gemini-3-flash-preview',     label: 'Gemini 3 Flash Preview', inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成',   speed: '爆速' },
   { id: 'openai/gpt-5-nano',                label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',        speed: '爆速' },
@@ -302,8 +297,10 @@ type TabType = 'review' | 'compare'
 
 export default function ReviewPage({ params }: { params: { id: string } }) {
   const [tab, setTab] = useState<TabType>('review')
-  const [reviewModelId, setReviewModelId] = useState(ALL_MODELS[0].id)
-  const [reviewModelLabel, setReviewModelLabel] = useState(ALL_MODELS[0].label)
+  // 管理者設定から取得したモデル一覧（動的）
+  const [adminModelList, setAdminModelList] = useState<CustomModelEntry[]>(DEFAULT_REVIEW_MODELS)
+  const [reviewModelId, setReviewModelId] = useState(DEFAULT_REVIEW_MODELS[0].id)
+  const [reviewModelLabel, setReviewModelLabel] = useState(DEFAULT_REVIEW_MODELS[0].label)
   const [reviewUseCustom, setReviewUseCustom] = useState(false)
   const [reviewCustomModel, setReviewCustomModel] = useState('')
   const [reviewSource, setReviewSource] = useState<'generated' | 'excel'>('generated')
@@ -321,12 +318,18 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
   const [approaches, setApproaches] = useState<Set<string>>(new Set(['リスクベースドテスト']))
 
   useEffect(() => {
-    // AdminSettings からデフォルトレビューモデルを取得（最優先）
+    // AdminSettings からデフォルトレビューモデルとモデルリストを取得（最優先）
     fetch('/api/admin/public-settings').then(r => r.json()).then((s: {
       defaultReviewModelId?: string
+      customModelList?: CustomModelEntry[]
     }) => {
+      // モデルリストを管理者設定から上書き
+      const modelList = (s.customModelList && s.customModelList.length > 0)
+        ? s.customModelList
+        : DEFAULT_REVIEW_MODELS
+      setAdminModelList(modelList)
       if (s.defaultReviewModelId) {
-        const found = ALL_MODELS.find(m => m.id === s.defaultReviewModelId)
+        const found = modelList.find(m => m.id === s.defaultReviewModelId)
         if (found) { setReviewModelId(found.id); setReviewUseCustom(false) }
         else { setReviewUseCustom(true); setReviewCustomModel(s.defaultReviewModelId) }
       }
@@ -357,11 +360,11 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
   const selectModel = (id: string) => {
     setReviewModelId(id)
     setReviewUseCustom(false)
-    setReviewModelLabel(ALL_MODELS.find(m => m.id === id)?.label ?? id)
+    setReviewModelLabel(adminModelList.find(m => m.id === id)?.label ?? id)
   }
 
   const getReviewModelId = () => reviewUseCustom ? (reviewCustomModel.trim() || reviewModelId) : reviewModelId
-  const getReviewModelLabel = () => reviewUseCustom ? (reviewCustomModel.trim() || reviewModelId) : (ALL_MODELS.find(m => m.id === reviewModelId)?.label ?? reviewModelId)
+  const getReviewModelLabel = () => reviewUseCustom ? (reviewCustomModel.trim() || reviewModelId) : (adminModelList.find(m => m.id === reviewModelId)?.label ?? reviewModelId)
 
   const buildLocalDesignMeta = (): DesignMeta => ({
     industry: industry as DesignMeta['industry'],
@@ -498,7 +501,7 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
               <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">速度</th>
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {ALL_MODELS.map(m => (
+              {adminModelList.map(m => (
                 <tr key={m.id} onClick={() => selectModel(m.id)}
                   className={clsx('cursor-pointer transition-colors', !reviewUseCustom && reviewModelId === m.id ? 'bg-shift-50 border-l-2 border-l-shift-700' : 'hover:bg-gray-50 border-l-2 border-l-transparent')}>
                   <td className="px-3 py-2.5 text-center">
