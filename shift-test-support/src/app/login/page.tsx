@@ -88,7 +88,7 @@ export default function LoginPage() {
           <div className="lg:hidden text-center mb-8">
             <div className="inline-flex items-center gap-2 text-shift-800 font-bold text-xl">
               <Shield className="w-6 h-6" />
-              <span>Shift</span>
+              <span>MSOK</span>
             </div>
           </div>
 

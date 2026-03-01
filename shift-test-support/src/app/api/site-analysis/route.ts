@@ -123,7 +123,7 @@ async function crawlSite(baseUrl: URL, maxDepth: number, maxPages: number): Prom
       const timeout = setTimeout(() => controller.abort(), 8000)
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'ShiftTestSupport/1.0 (site analysis bot)' }
+        headers: { 'User-Agent': 'MSOKTestSupport/1.0 (site analysis bot)' }
       })
       clearTimeout(timeout)
 

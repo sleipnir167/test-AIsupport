@@ -69,7 +69,7 @@ export default function ProjectSidebar({ projectId, projectName, showAiLogsTab =
       <div className="p-3 border-t border-gray-100">
         <div className="bg-shift-50 rounded-lg p-3">
           <p className="text-xs font-semibold text-shift-800 mb-1">ヘルプ</p>
-          <p className="text-xs text-shift-600">ご不明な点はShiftサポートまでお問い合わせください。</p>
+          <p className="text-xs text-shift-600">ご不明な点はMSOKサポートまでお問い合わせください。</p>
         </div>
       </div>
     </aside>
