@@ -5,7 +5,8 @@
  * フロントエンドがtotalBatches回呼び出す。
  */
 import { NextResponse } from 'next/server'
-import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings } from '@/lib/db'
+import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings, getRefMap } from '@/lib/db'
+import type { RefMapEntry } from '@/lib/ai'
 import { searchChunks } from '@/lib/vector'
 import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
 import OpenAI from 'openai'
@@ -107,12 +108,14 @@ export async function POST(req: Request) {
       ? `${baseQuery} ${targetPages.map(p => p.title).join(' ')}`
       : baseQuery
 
-    const [docChunks, siteChunks, sourceChunks] = await Promise.all([
+    const [docChunks, siteChunks, sourceChunks, savedRefMap] = await Promise.all([
       searchChunks(pageQuery, projectId, ragTopK.doc),
       searchChunks(pageQuery, projectId, ragTopK.site, 'site_analysis'),
       searchChunks(pageQuery, projectId, ragTopK.src, 'source_code'),
+      // プランニング時に確定したREFマップを取得（REFずれ防止）
+      getRefMap(projectId),
     ])
-    log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length}`)
+    log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length} savedRefMap=${savedRefMap?.length ?? 'none'}`)
 
     const seenIds = new Set<string>()
     const allChunks = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
@@ -135,7 +138,9 @@ export async function POST(req: Request) {
           perspective: planBatch.perspective,
           titles: planBatch.titles,
           customSystemPrompt: promptTemplate.systemPrompt,
-          refOffset,  // ★ グローバルREF番号オフセット
+          refOffset,
+          // ★ プランニング時のREFマップがあれば使用してREFずれを防ぐ
+          pinnedRefMap: savedRefMap ?? undefined,
         }
       )
     } else {

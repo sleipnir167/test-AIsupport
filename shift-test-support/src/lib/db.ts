@@ -1,5 +1,6 @@
 import { Redis } from '@upstash/redis'
 import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings, TestPlan } from '@/types'
+import type { RefMapEntry } from '@/lib/ai'
 
 export const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
@@ -15,6 +16,8 @@ const KEY = {
   testItem:      (id: string)        => `testitem:${id}`,
   siteAnalysis:  (projectId: string) => `project:${projectId}:siteanalysis`,
   testPlan:      (projectId: string) => `project:${projectId}:testplan`,
+  /** プランニング時のREFマップ（チャンク→REF番号の対応表）を保存 */
+  refMap:        (projectId: string) => `project:${projectId}:refmap`,
 }
 
 // ─── プロジェクト ────────────────────────────────────────────
@@ -215,10 +218,23 @@ const DEFAULT_TEMPLATE: PromptTemplate = {
   planningSystemPrompt: `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
 提供された仕様書・ソースコード・サイト構造を分析し、テスト項目の「全体プラン（目次）」をJSON配列形式のみで出力してください。
 説明文・マークダウン・コードブロックは一切含めないでください。`,
-  systemPrompt: `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
-提供されたシステム仕様・設計書・サイト構造・ソースコードを分析し、品質を担保するための網羅的なテスト項目書を日本語で作成してください。
-必ずJSON配列のみで回答し、マークダウンのコードブロックや説明文は一切含めないでください。
-件数は必ず指定された数を出力してください。`,
+  systemPrompt: `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。以下の制約を「死守」してください。
+
+## 任務
+提供された情報を分析し、境界値分析・同値分割・状態遷移テスト等を用い、品質を担保するための網羅的なテスト項目書を日本語で作成してください。
+
+## 出力形式（最優先事項）
+1. 回答は「純粋なJSON配列」のみとする。
+2. マークダウンのコードブロック（\`\`\`json ... \`\`\`）は絶対に使用しない。
+3. 説明文、挨拶、補足、謝罪などの自然言語は1文字も出力しない。
+4. JSONの開始文字は必ず [ で始め、終了文字は ] とすること。
+5. 指定された件数を必ず厳守すること。
+
+## sourceRefsの記載ルール（厳守）
+- refIdには必ずユーザープロンプトの「参照資料一覧」に記載されているREF番号（REF-1、REF-2 等）を使用すること
+- 参照資料一覧に存在しないREF番号・ファイル名・コード行は絶対に使用しないこと
+- 各テスト項目の根拠となった参照資料のREF番号と理由を1〜3件記載すること
+- 参照資料が存在しない場合のみ空配列 [] とすること`,
   reviewSystemPrompt: `あなたはソフトウェアテスト品質保証の第三者評価専門家です。
 ISO/IEC 25010、ISO/IEC/IEEE 29119、OWASP ASVS、ISTQBの各標準に精通し、
 テスト設計の妥当性を定量的かつ客観的に評価します。
@@ -297,4 +313,21 @@ export async function saveTestPlan(plan: TestPlan): Promise<void> {
 
 export async function deleteTestPlan(projectId: string): Promise<void> {
   await redis.del(KEY.testPlan(projectId))
+}
+
+// ─── REFマップ（プランニング時のチャンク→REF対応表）──────────
+/**
+ * プランニング時に確定したREFマップをRedisに保存する。
+ * バッチ実行時にこれを参照することで、バッチをまたいでREF番号が一意に保たれる。
+ */
+export async function saveRefMap(projectId: string, refMap: RefMapEntry[]): Promise<void> {
+  await redis.set(KEY.refMap(projectId), refMap, { ex: PLAN_TTL })
+}
+
+/**
+ * プランニング時に保存したREFマップを取得する。
+ * バッチ実行時はRAGを再検索せずこれを使うことでREF番号のずれを防ぐ。
+ */
+export async function getRefMap(projectId: string): Promise<RefMapEntry[] | null> {
+  return redis.get<RefMapEntry[]>(KEY.refMap(projectId))
 }

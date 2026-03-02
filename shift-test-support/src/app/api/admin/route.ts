@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getAdminSettings, saveAdminSettings, getPromptTemplate, savePromptTemplate } from '@/lib/db'
+import { getAdminSettings, saveAdminSettings, getPromptTemplate, savePromptTemplate, getRefMap } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +15,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
+    // ?action=refmap&projectId=xxx で REFマップを返す
+    const { searchParams } = new URL(req.url)
+    if (searchParams.get('action') === 'refmap') {
+      const projectId = searchParams.get('projectId')
+      if (!projectId) return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
+      const refMap = await getRefMap(projectId)
+      return NextResponse.json({ refMap: refMap ?? [] })
+    }
     const [settings, template] = await Promise.all([getAdminSettings(), getPromptTemplate()])
     return NextResponse.json({ settings, template })
   } catch (e) {

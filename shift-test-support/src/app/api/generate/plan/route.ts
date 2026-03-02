@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
-import { getProject, saveAILog, getPromptTemplate, getAdminSettings, saveTestPlan } from '@/lib/db'
+import { getProject, saveAILog, getPromptTemplate, getAdminSettings, saveTestPlan, saveRefMap } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
 import { buildPlanningPrompts } from '@/lib/ai'
 import type { TestPlan, TestPlanBatch } from '@/types'
@@ -179,6 +179,11 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     }
     await saveTestPlan(plan)
+
+    // ── REFマップをRedisに保存（バッチ実行時のREFずれを防ぐ）──────
+    // バッチ実行では毎回RAGを再検索するためチャンクの順序が変わりREF番号がずれる。
+    // プランニング確定時点のrefMapを保存し、各バッチでそれを使うことで一意性を保証する。
+    await saveRefMap(projectId, refMap)
 
     // ── AIログ保存 ──────────────────────────────────────────────
     const sysT = estimateTokens(systemPrompt)

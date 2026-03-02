@@ -386,6 +386,12 @@ export interface BatchFromPlanOptions {
   customSystemPrompt?: string
   /** REF番号をバッチをまたいで一意にするためのグローバルオフセット（省略時 = 0）*/
   refOffset?: number
+  /**
+   * プランニング時に確定したREFマップ（Redisから取得）。
+   * 指定された場合はRAGの再検索結果ではなくこのマップをそのまま使用するため
+   * バッチをまたいでREF番号が一致しないずれを完全に防ぐことができる。
+   */
+  pinnedRefMap?: RefMapEntry[]
 }
 
 export function buildBatchFromPlanPrompts(
@@ -395,27 +401,44 @@ export function buildBatchFromPlanPrompts(
   options: BatchFromPlanOptions
 ): BuildPromptsResult {
   const { batchId, totalBatches, category, perspective, titles } = options
-  // refOffset: バッチをまたいでREF番号がグローバルで一意になるよう加算する
   const refOffset = options.refOffset ?? 0
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
   const sourceChunks = chunks.filter(c => c.category === 'source_code')
-
   const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
-  const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
-    refId: `REF-${refOffset + i + 1}`,
-    filename: c.filename,
-    category: c.category,
-    excerpt: c.text.slice(0, 250),
-    pageUrl: c.pageUrl,
-  }))
 
+  // ★ pinnedRefMap が存在する場合: プランニング時に確定したREFマップをそのまま使用。
+  //    これにより「バッチごとにRAGが異なるチャンクを返しREF番号がずれる」問題を完全に解消する。
+  // ★ pinnedRefMap がない場合（旧バッチ等）: 従来通りRAG結果からrefMapを構築。
+  const refMap: RefMapEntry[] = options.pinnedRefMap
+    ? options.pinnedRefMap
+    : allChunksOrdered.map((c, i) => ({
+        refId: `REF-${refOffset + i + 1}`,
+        filename: c.filename,
+        category: c.category,
+        excerpt: c.text.slice(0, 250),
+        pageUrl: c.pageUrl,
+      }))
+
+  // コンテキストテキストは常にRAG結果から構築（実際の内容を参照させるため）。
+  // ただし各チャンクの [REF-N] ラベルは pinnedRefMap と一致させる。
+  // pinnedRefMap を使う場合、RAGチャンクと pinnedRefMap のエントリを filename で照合してREF番号を付ける。
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, localOffset = 0) => {
     if (!list.length) return ''
-    const text = list
-      .map((c, i) => `[REF-${refOffset + localOffset + i + 1}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`)
-      .join('\n\n')
+    const text = list.map((c) => {
+      let refLabel: string
+      if (options.pinnedRefMap) {
+        // pinnedRefMap の中から同じファイル名のエントリを探してREF番号を使う
+        const matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
+        refLabel = matched ? matched.refId : `REF-UNKNOWN`
+      } else {
+        // 従来ロジック: allChunksOrdered 内の位置から計算
+        const idx = allChunksOrdered.findIndex(ac => ac.docId === c.docId && ac.chunkIndex === c.chunkIndex)
+        refLabel = `REF-${refOffset + (idx >= 0 ? idx : localOffset) + 1}`
+      }
+      return `[${refLabel}: ${c.filename}${c.pageUrl ? ' (' + c.pageUrl + ')' : ''}]\n${c.text}`
+    }).join('\n\n')
     return `\n\n## ${label}\n${text.slice(0, maxLen)}`
   }
 
@@ -426,15 +449,12 @@ export function buildBatchFromPlanPrompts(
   ].join('')
 
   const refMapSummary = refMap.length > 0
-    ? `\n\n## 参照資料一覧\n` + refMap.map(r => `${r.refId}: [${r.category}] ${r.filename}${r.pageUrl ? ' (' + r.pageUrl + ')' : ''}`).join('\n')
+    ? `\n\n## 参照資料一覧（sourceRefsのrefIdに使用すること）\n` + refMap.map(r => `${r.refId}: [${r.category}] ${r.filename}${r.pageUrl ? ' (' + r.pageUrl + ')' : ''}`).join('\n')
     : ''
 
   const titleList = titles.map((t, i) => `${i + 1}. ${t}`).join('\n')
 
-  const systemPrompt = options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。
-提供されたテストタイトルリストに対して、仕様書を参照しながら各テスト項目の詳細（手順・期待結果・事前条件など）を日本語で作成してください。
-必ずJSON配列のみで回答し、マークダウンのコードブロックや説明文は一切含めないでください。
-件数は必ず指定された数を出力してください。`
+  const systemPrompt = options.customSystemPrompt || `あなたはソフトウェア品質保証の専門家です。15年以上のQA経験を持ち、E2Eテスト設計・境界値分析・同値分割・デシジョンテーブル・状態遷移テストに精通しています。以下の制約を「死守」してください。\n\n## 任務\n提供されたテストタイトルリストに対して、仕様書を参照しながら各テスト項目の詳細（手順・期待結果・事前条件など）を日本語で作成してください。\n\n## 出力形式（最優先事項）\n1. 回答は「純粋なJSON配列」のみとする。\n2. マークダウンのコードブロックは絶対に使用しない。\n3. 説明文・挨拶などの自然言語は1文字も出力しない。\n4. JSONは [ で始まり ] で終わること。\n5. 指定された件数を必ず厳守すること。\n\n## sourceRefsの記載ルール（厳守）\n- refIdには必ず「参照資料一覧」に記載のREF番号（REF-1等）を使用すること\n- 一覧に存在しないREF番号・ファイル名・コード行は絶対に使用しないこと`
 
   const userPrompt = `プロジェクト名: ${projectName}
 テスト対象システム: ${targetSystem}

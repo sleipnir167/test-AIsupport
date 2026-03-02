@@ -5,7 +5,7 @@ import {
   Eye, EyeOff, CheckCircle2, AlertTriangle, Sliders,
   TerminalSquare, ChevronDown, ChevronUp, Info, Shield,
   Monitor, MessageSquare, Type, ToggleLeft, ToggleRight,
-  Plus, Trash2, RefreshCw, Edit3
+  Plus, Trash2, RefreshCw, BookOpen, Search, Database, ChevronRight, ExternalLink
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AdminSettings, PromptTemplate, CustomModelEntry } from '@/types'
@@ -58,7 +58,7 @@ const MODEL_LIMITS = [
 ]
 
 // ─── タブ型 ────────────────────────────────────────────────────
-type TabType = 'settings' | 'models' | 'modellist' | 'display' | 'labels' | 'prompts'
+type TabType = 'settings' | 'models' | 'modellist' | 'display' | 'labels' | 'prompts' | 'refmap'
 
 // ─── ModelPickerコンポーネント ─────────────────────────────────
 function ModelPicker({
@@ -490,12 +490,13 @@ export default function AdminPage() {
 
   // ─── 管理画面本体 ──────────────────────────────────────────
   const TABS: { id: TabType; label: string; icon: typeof Sliders }[] = [
-    { id: 'settings',   label: 'AI実行設定',         icon: Sliders },
-    { id: 'models',     label: 'モデル初期値',        icon: Settings },
-    { id: 'modellist',  label: 'モデル一覧管理',      icon: Plus },
-    { id: 'display',    label: '表示制御',            icon: Monitor },
-    { id: 'labels',     label: 'UI文言',              icon: Type },
-    { id: 'prompts',    label: 'プロンプトテンプレート', icon: FileText },
+    { id: 'settings',   label: 'AI実行設定',             icon: Sliders },
+    { id: 'models',     label: 'モデル初期値',            icon: Settings },
+    { id: 'modellist',  label: 'モデル一覧管理',          icon: Plus },
+    { id: 'display',    label: '表示制御',               icon: Monitor },
+    { id: 'labels',     label: 'UI文言',                 icon: Type },
+    { id: 'prompts',    label: 'プロンプトテンプレート',  icon: FileText },
+    { id: 'refmap',     label: 'REF確認',                icon: BookOpen },
   ]
 
   return (
@@ -943,11 +944,180 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* ━━━━━━━━━━━━━━━━━ REF確認 ━━━━━━━━━━━━━━━━━ */}
+        {activeTab === 'refmap' && (
+          <RefMapViewer password={password} />
+        )}
+
         {/* 最終更新 */}
         {settings.updatedAt && (
           <p className="text-xs text-gray-600 text-center">最終更新: {new Date(settings.updatedAt).toLocaleString('ja-JP')}</p>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── REFマップビューア ──────────────────────────────────────────
+function RefMapViewer({ password }: { password: string }) {
+  const [projectId, setProjectId] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [refMap, setRefMap] = useState<Array<{
+    refId: string; filename: string; category: string; excerpt: string; pageUrl?: string | null
+  }> | null>(null)
+  const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const CATEGORY_LABELS: Record<string, string> = {
+    customer_doc:    '仕様書',
+    MSOK_knowledge:  'MSOKナレッジ',
+    source_code:     'ソースコード',
+    site_analysis:   'サイト分析',
+  }
+  const CATEGORY_COLORS: Record<string, string> = {
+    customer_doc:    'bg-blue-900/40 text-blue-300 border-blue-700/50',
+    MSOK_knowledge:  'bg-purple-900/40 text-purple-300 border-purple-700/50',
+    source_code:     'bg-gray-700/60 text-gray-300 border-gray-600',
+    site_analysis:   'bg-green-900/40 text-green-300 border-green-700/50',
+  }
+
+  const load = async () => {
+    if (!projectId.trim()) { setError('プロジェクトIDを入力してください'); return }
+    setLoading(true); setError(''); setRefMap(null)
+    try {
+      const res = await fetch(
+        `/api/admin?action=refmap&projectId=${encodeURIComponent(projectId.trim())}`,
+        { headers: { 'x-admin-password': password } }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'エラーが発生しました')
+      setRefMap(data.refMap ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filtered = refMap?.filter(r => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return r.refId.toLowerCase().includes(q)
+      || r.filename.toLowerCase().includes(q)
+      || r.category.toLowerCase().includes(q)
+      || r.excerpt.toLowerCase().includes(q)
+  }) ?? []
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl px-4 py-3 text-blue-300 text-sm flex items-start gap-2">
+        <Database className="w-4 h-4 mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="font-semibold">REFマップ確認</p>
+          <p className="text-xs text-blue-400/80 mt-0.5">
+            プランニング時に確定したREF番号とチャンクの対応表を確認できます。
+            バッチ実行時はこのマップを使用するためREF番号がずれません。
+          </p>
+        </div>
+      </div>
+
+      {/* 入力 */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-3">
+        <label className="text-xs text-gray-400 block">プロジェクトID</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={projectId}
+            onChange={e => setProjectId(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && load()}
+            placeholder="例: proj-xxxxxxxx"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-gray-200 font-mono outline-none focus:border-shift-600"
+          />
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-5 py-2 bg-shift-800 hover:bg-shift-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {loading ? '取得中...' : '取得'}
+          </button>
+        </div>
+        {error && (
+          <div className="text-red-400 text-sm flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4" />{error}
+          </div>
+        )}
+      </div>
+
+      {/* 結果 */}
+      {refMap !== null && (
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-shift-400" />
+              <span className="font-semibold text-white">REFマップ</span>
+              <span className="text-xs text-gray-400 font-mono">{refMap.length}件 / 表示:{filtered.length}件</span>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="REF-N・ファイル名・本文で絞り込み"
+                className="bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-200 outline-none focus:border-shift-600 w-60"
+              />
+            </div>
+          </div>
+
+          {refMap.length === 0 ? (
+            <div className="py-16 text-center text-gray-500 space-y-2">
+              <Database className="w-10 h-10 mx-auto opacity-30" />
+              <p className="text-sm">このプロジェクトのREFマップは存在しません</p>
+              <p className="text-xs">プランニングを実行するとREFマップが保存されます</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-800/60">
+              {filtered.map(r => {
+                const catColor = CATEGORY_COLORS[r.category] ?? 'bg-gray-700/60 text-gray-300 border-gray-600'
+                const catLabel = CATEGORY_LABELS[r.category] ?? r.category
+                const isExpanded = expandedId === r.refId
+                return (
+                  <div key={r.refId} className="hover:bg-gray-800/40 transition-colors">
+                    <button
+                      onClick={() => setExpandedId(isExpanded ? null : r.refId)}
+                      className="w-full flex items-center gap-3 px-5 py-3 text-left">
+                      <ChevronRight className={clsx('w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform', isExpanded && 'rotate-90')} />
+                      {/* REF番号 */}
+                      <span className="font-mono font-bold text-shift-400 w-16 flex-shrink-0 text-sm">{r.refId}</span>
+                      {/* カテゴリバッジ */}
+                      <span className={clsx('text-xs px-2 py-0.5 rounded-full border flex-shrink-0', catColor)}>{catLabel}</span>
+                      {/* ファイル名 */}
+                      <span className="text-sm text-gray-200 flex-1 truncate">{r.filename}</span>
+                      {/* URL */}
+                      {r.pageUrl && (
+                        <a href={r.pageUrl} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          className="flex-shrink-0 text-xs text-shift-400 hover:underline flex items-center gap-0.5">
+                          <ExternalLink className="w-3 h-3" />URL
+                        </a>
+                      )}
+                    </button>
+                    {isExpanded && (
+                      <div className="px-5 pb-4 pl-[calc(1.25rem+1rem+3.5rem)]">
+                        <div className="bg-gray-800 rounded-xl p-4">
+                          <p className="text-xs text-gray-500 mb-2 font-semibold">📄 抜粋テキスト（先頭250文字）</p>
+                          <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{r.excerpt}</pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
