@@ -6,9 +6,8 @@
  */
 import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings, getRefMap } from '@/lib/db'
-import type { RefMapEntry } from '@/lib/ai'
-import { searchChunks } from '@/lib/vector'
 import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
+import { searchChunks } from '@/lib/vector'
 import OpenAI from 'openai'
 import type { TestPlanBatch } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
@@ -235,15 +234,13 @@ export async function POST(req: Request) {
       clearTimeout(abortTimer)
     }
 
-    const items = parseTestItems(fullContent, projectId, refMap ?? [], (() => {
-      // ■3修正: バッチ実際参照チャンクのテキストをマップ化して渡す
-      const m = new Map<string, string>()
-      for (const c of allChunks) {
-        const key = `${c.filename}__${c.category}`
-        if (!m.has(key)) m.set(key, c.text.slice(0, 250))
-      }
-      return m
-    })())
+    // chunkKeyベースのexcerptマップ（■3修正: REFずれ修正と合わせてchunkKey統一）
+    const chunkExcerptMap = new Map<string, string>()
+    for (const c of allChunks) {
+      const key = `${c.docId}-${c.chunkIndex}`
+      chunkExcerptMap.set(key, c.text.slice(0, 250))
+    }
+    const items = parseTestItems(fullContent, projectId, refMap ?? [], chunkExcerptMap)
     log(jobId, `Parsed: ${items.length} items`)
 
     const itemsWithOrder = items.map((item, i) => ({

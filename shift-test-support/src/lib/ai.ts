@@ -22,6 +22,9 @@ export interface RefMapEntry {
   category: string
   excerpt: string
   pageUrl?: string | null
+  /** チャンク単位で一意に識別するキー（"docId-chunkIndex"形式）。
+   *  pinnedRefMapでの照合精度向上のため追加。省略時はfilename+categoryで照合（後方互換）。*/
+  chunkKey?: string
 }
 
 export interface BuildPromptsResult {
@@ -53,6 +56,7 @@ export function buildPrompts(
     category: c.category,
     excerpt: c.text.slice(0, 250),
     pageUrl: c.pageUrl,
+    chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
 
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
@@ -172,10 +176,8 @@ export function parseTestItems(
   refMap: RefMapEntry[] = [],
   /**
    * バッチ実行時のRAGチャンクから構築したマップ。
-   * キー: `${filename}__${category}`, 値: チャンクテキスト（先頭250文字）。
-   * 指定された場合、refMapのexcerptよりこちらを優先して「該当箇所」表示に使う。
-   * これにより pinnedRefMap（プランニング時スナップショット）と
-   * バッチ実際参照チャンクの食い違いによる■3問題を解消する。
+   * キー: chunkKey（"docId-chunkIndex"）, 値: チャンクテキスト先頭250文字。
+   * 指定された場合、refMapのexcerptよりこちらを優先して「該当箇所」表示に使う（■3修正）。
    */
   chunkExcerptMap?: Map<string, string>
 ): TestItem[] {
@@ -219,9 +221,8 @@ export function parseTestItems(
         if (!sr.refId) continue
         const meta = refIndex.get(sr.refId)
         if (meta) {
-          // バッチ実行時のチャンクテキストがあればそちらを優先（■3修正）
-          const chunkKey = `${meta.filename}__${meta.category}`
-          const liveExcerpt = chunkExcerptMap?.get(chunkKey)
+          // chunkKeyでchunkExcerptMapを引く。なければmeta.excerptにフォールバック（■3修正）
+          const liveExcerpt = meta.chunkKey ? chunkExcerptMap?.get(meta.chunkKey) : undefined
           const excerptBody = liveExcerpt ?? meta.excerpt
           sourceRefs.push({
             refId: sr.refId,          // REF-N番号を保持して画面で表示できるようにする
@@ -303,6 +304,7 @@ export function buildPlanningPrompts(
     category: c.category,
     excerpt: c.text.slice(0, 250),
     pageUrl: c.pageUrl,
+    chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
 
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
@@ -433,18 +435,35 @@ export function buildBatchFromPlanPrompts(
         category: c.category,
         excerpt: c.text.slice(0, 250),
         pageUrl: c.pageUrl,
+        chunkKey: `${c.docId}-${c.chunkIndex}`,
       }))
 
   // コンテキストテキストは常にRAG結果から構築（実際の内容を参照させるため）。
   // ただし各チャンクの [REF-N] ラベルは pinnedRefMap と一致させる。
-  // pinnedRefMap を使う場合、RAGチャンクと pinnedRefMap のエントリを filename で照合してREF番号を付ける。
+  //
+  // 【照合優先順位】
+  //   1. chunkKey（docId-chunkIndex）による完全一致  ← 最も正確
+  //   2. filename + category による一致              ← 同一ファイルの別チャンクでずれが起きる旧ロジック
+  //      ただし同名エントリが複数ある場合は filename+category+excerpt先頭50文字で近似一致
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, localOffset = 0) => {
     if (!list.length) return ''
     const text = list.map((c) => {
       let refLabel: string
       if (options.pinnedRefMap) {
-        // pinnedRefMap の中から同じファイル名のエントリを探してREF番号を使う
-        const matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
+        const chunkKey = `${c.docId}-${c.chunkIndex}`
+        // 優先1: chunkKey で正確に一致するエントリを探す
+        let matched = options.pinnedRefMap.find(r => r.chunkKey === chunkKey)
+        if (!matched) {
+          // 優先2: filename+category+excerpt先頭50文字で近似一致（chunkKeyなし旧データ対応）
+          const excerpt50 = c.text.slice(0, 50)
+          matched = options.pinnedRefMap.find(
+            r => r.filename === c.filename && r.category === c.category && r.excerpt.startsWith(excerpt50.slice(0, 30))
+          )
+        }
+        if (!matched) {
+          // フォールバック: filename+category（従来ロジック、最終手段）
+          matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
+        }
         refLabel = matched ? matched.refId : `REF-UNKNOWN`
       } else {
         // 従来ロジック: allChunksOrdered 内の位置から計算

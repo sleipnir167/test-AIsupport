@@ -6,7 +6,7 @@ import {
   AlertCircle, Zap
 } from 'lucide-react'
 import { priorityColors, priorityLabels, automatableColors, automatableLabels } from '@/lib/mock-data'
-import type { TestItem, Priority, Automatable, TestPerspective, SourceRef } from '@/types'
+import type { TestItem, Priority, Automatable, TestPerspective } from '@/types'
 import { clsx } from 'clsx'
 import Link from 'next/link'
 
