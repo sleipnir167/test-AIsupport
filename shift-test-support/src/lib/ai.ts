@@ -169,7 +169,15 @@ function repairJsonArray(raw: string): string {
 export function parseTestItems(
   content: string,
   projectId: string,
-  refMap: RefMapEntry[] = []
+  refMap: RefMapEntry[] = [],
+  /**
+   * バッチ実行時のRAGチャンクから構築したマップ。
+   * キー: `${filename}__${category}`, 値: チャンクテキスト（先頭250文字）。
+   * 指定された場合、refMapのexcerptよりこちらを優先して「該当箇所」表示に使う。
+   * これにより pinnedRefMap（プランニング時スナップショット）と
+   * バッチ実際参照チャンクの食い違いによる■3問題を解消する。
+   */
+  chunkExcerptMap?: Map<string, string>
 ): TestItem[] {
   let jsonStr: string
   try {
@@ -211,11 +219,15 @@ export function parseTestItems(
         if (!sr.refId) continue
         const meta = refIndex.get(sr.refId)
         if (meta) {
+          // バッチ実行時のチャンクテキストがあればそちらを優先（■3修正）
+          const chunkKey = `${meta.filename}__${meta.category}`
+          const liveExcerpt = chunkExcerptMap?.get(chunkKey)
+          const excerptBody = liveExcerpt ?? meta.excerpt
           sourceRefs.push({
             refId: sr.refId,          // REF-N番号を保持して画面で表示できるようにする
             filename: meta.filename,
             category: meta.category,
-            excerpt: meta.excerpt + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
+            excerpt: excerptBody + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
             pageUrl: meta.pageUrl ?? undefined,
           })
         } else {

@@ -2,7 +2,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   Search, Filter, Download, Edit3, Trash2, ChevronDown, ChevronRight,
-  X, Save, Loader2, BookOpen, FileText, Globe, Code2, ExternalLink
+  X, Save, Loader2, BookOpen, FileText, Globe, Code2, ExternalLink,
+  AlertCircle, Zap
 } from 'lucide-react'
 import { priorityColors, priorityLabels, automatableColors, automatableLabels } from '@/lib/mock-data'
 import type { TestItem, Priority, Automatable, TestPerspective, SourceRef } from '@/types'
@@ -15,6 +16,17 @@ const CATEGORY_LABELS: Record<string, { label: string; icon: typeof FileText; co
   MSOK_knowledge: { label: 'MSOKナレッジ', icon: BookOpen,  color: 'bg-purple-50 text-purple-700 border-purple-200' },
   source_code:    { label: 'ソースコード', icon: Code2,     color: 'bg-gray-100 text-gray-700 border-gray-300' },
   site_analysis:  { label: 'サイト分析',   icon: Globe,     color: 'bg-green-50 text-green-700 border-green-200' },
+}
+
+// excerpt から 【導出根拠】 を分離するユーティリティ
+function splitExcerpt(excerpt: string): { body: string; derivation: string } {
+  const marker = '\n\n【導出根拠】'
+  const idx = excerpt.indexOf(marker)
+  if (idx === -1) return { body: excerpt, derivation: '' }
+  return {
+    body: excerpt.slice(0, idx),
+    derivation: excerpt.slice(idx + marker.length),
+  }
 }
 
 // 出典モーダル
@@ -49,9 +61,16 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
             refs.map((ref, i) => {
               const meta = CATEGORY_LABELS[ref.category] ?? CATEGORY_LABELS.customer_doc
               const Icon = meta.icon
+              const { body, derivation } = splitExcerpt(ref.excerpt ?? '')
               return (
                 <div key={i} className="border border-gray-200 rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    {/* REF番号バッジ (■4) */}
+                    {ref.refId && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-shift-100 text-shift-700 border border-shift-200 font-mono">
+                        {ref.refId}
+                      </span>
+                    )}
                     <span className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border', meta.color)}>
                       <Icon className="w-3 h-3" />{meta.label}
                     </span>
@@ -63,9 +82,23 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
                       </a>
                     )}
                   </div>
-                  {ref.excerpt && (
-                    <div className="bg-gray-50 rounded-lg p-3">
+                  {/* 該当箇所（excerpt本文） (■3 fix) */}
+                  {body && (
+                    <div className="bg-gray-50 rounded-lg p-3 mb-2">
                       <p className="text-xs text-gray-500 mb-1 font-medium">📄 該当箇所</p>
+                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{body}</p>
+                    </div>
+                  )}
+                  {/* 導出根拠（分離表示） (■3 fix & ■4) */}
+                  {derivation && (
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                      <p className="text-xs text-amber-600 mb-1 font-medium">🔍 導出根拠</p>
+                      <p className="text-xs text-amber-800 leading-relaxed">{derivation}</p>
+                    </div>
+                  )}
+                  {/* excerpt が空の場合（REF不明等） */}
+                  {!body && !derivation && ref.excerpt && (
+                    <div className="bg-gray-50 rounded-lg p-3">
                       <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{ref.excerpt}</p>
                     </div>
                   )}
@@ -79,6 +112,92 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
           <p className="text-xs text-gray-400">
             {refs.length > 0 ? `${refs.length}件の出典` : '出典なし'}
           </p>
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 優先度根拠モーダル (■2)
+function PriorityReasonModal({ item, onClose }: { item: TestItem; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <div>
+              <h2 className="font-bold text-gray-900 text-sm">優先度の判定根拠</h2>
+              <p className="text-xs text-gray-500 truncate max-w-xs">{item.testTitle}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={clsx('badge text-sm px-3 py-1', priorityColors[item.priority])}>
+              優先度：{priorityLabels[item.priority]}
+            </span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-4">
+            <p className="text-xs text-gray-500 mb-1 font-medium">🤖 AIによる判定根拠</p>
+            {item.priorityReason ? (
+              <p className="text-sm text-gray-800 leading-relaxed">{item.priorityReason}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">判定根拠の記録がありません</p>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-gray-100 px-5 py-3 flex justify-end">
+          <button onClick={onClose} className="px-4 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 自動化根拠モーダル (■2)
+function AutomatableReasonModal({ item, onClose }: { item: TestItem; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-amber-500" />
+            <div>
+              <h2 className="font-bold text-gray-900 text-sm">自動化可否の判定根拠</h2>
+              <p className="text-xs text-gray-500 truncate max-w-xs">{item.testTitle}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={clsx('badge text-sm px-3 py-1', automatableColors[item.automatable])}>
+              {automatableLabels[item.automatable]}
+            </span>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-4">
+            <p className="text-xs text-gray-500 mb-1 font-medium">🤖 AIによる判定根拠</p>
+            {item.automatableReason ? (
+              <p className="text-sm text-gray-800 leading-relaxed">{item.automatableReason}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">判定根拠の記録がありません</p>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-gray-100 px-5 py-3 flex justify-end">
           <button onClick={onClose} className="px-4 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
             閉じる
           </button>
@@ -124,6 +243,9 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
   const [editDraft, setEditDraft] = useState<Partial<TestItem>>({})
   const [saving, setSaving] = useState(false)
   const [sourceModalItem, setSourceModalItem] = useState<TestItem | null>(null)
+  // ■2: 優先度・自動化根拠モーダル用state
+  const [priorityReasonItem, setPriorityReasonItem] = useState<TestItem | null>(null)
+  const [automatableReasonItem, setAutomatableReasonItem] = useState<TestItem | null>(null)
 
   const fetchItems = async () => {
     try {
@@ -218,6 +340,14 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
       {/* 出典モーダル */}
       {sourceModalItem && (
         <SourceRefModal item={sourceModalItem} onClose={() => setSourceModalItem(null)} />
+      )}
+      {/* 優先度根拠モーダル (■2) */}
+      {priorityReasonItem && (
+        <PriorityReasonModal item={priorityReasonItem} onClose={() => setPriorityReasonItem(null)} />
+      )}
+      {/* 自動化根拠モーダル (■2) */}
+      {automatableReasonItem && (
+        <AutomatableReasonModal item={automatableReasonItem} onClose={() => setAutomatableReasonItem(null)} />
       )}
 
       <div className="flex items-center justify-between">
@@ -376,11 +506,33 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                                   )}
                                 </div>
                               </td>
+                              {/* 優先度セル: クリックで根拠モーダル表示 (■2) */}
                               <td className="text-center">
-                                <span className={clsx('badge text-xs', priorityColors[item.priority])}>{priorityLabels[item.priority]}</span>
+                                <button
+                                  onClick={() => setPriorityReasonItem(item)}
+                                  title={item.priorityReason ? `根拠: ${item.priorityReason}` : '優先度の根拠を確認'}
+                                  className={clsx(
+                                    'badge text-xs cursor-pointer hover:opacity-80 transition-opacity',
+                                    priorityColors[item.priority],
+                                    item.priorityReason ? 'underline decoration-dotted' : ''
+                                  )}
+                                >
+                                  {priorityLabels[item.priority]}
+                                </button>
                               </td>
+                              {/* 自動化セル: クリックで根拠モーダル表示 (■2) */}
                               <td className="text-center">
-                                <span className={clsx('badge text-xs', automatableColors[item.automatable])}>{automatableLabels[item.automatable]}</span>
+                                <button
+                                  onClick={() => setAutomatableReasonItem(item)}
+                                  title={item.automatableReason ? `根拠: ${item.automatableReason}` : '自動化可否の根拠を確認'}
+                                  className={clsx(
+                                    'badge text-xs cursor-pointer hover:opacity-80 transition-opacity',
+                                    automatableColors[item.automatable],
+                                    item.automatableReason ? 'underline decoration-dotted' : ''
+                                  )}
+                                >
+                                  {automatableLabels[item.automatable]}
+                                </button>
                               </td>
                               <td className="text-center">
                                 <SourceBadge item={item} onClick={() => setSourceModalItem(item)} />
