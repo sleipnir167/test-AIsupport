@@ -19,6 +19,9 @@ export interface GenerateOptions {
 // refMapの型をエクスポート
 export interface RefMapEntry {
   refId: string
+  /** チャンクの一意識別子（docId + chunkIndex でREF照合に使用） */
+  docId: string
+  chunkIndex: number
   filename: string
   category: string
   excerpt: string
@@ -51,6 +54,8 @@ export function buildPrompts(
   const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
   const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
     refId: `REF-${i + 1}`,
+    docId: c.docId,
+    chunkIndex: c.chunkIndex,
     filename: c.filename,
     category: c.category,
     excerpt: c.text.slice(0, excerptLength),
@@ -292,6 +297,8 @@ export function buildPlanningPrompts(
   const allChunksOrdered = [...docChunks, ...siteChunks, ...sourceChunks]
   const refMap: RefMapEntry[] = allChunksOrdered.map((c, i) => ({
     refId: `REF-${i + 1}`,
+    docId: c.docId,
+    chunkIndex: c.chunkIndex,
     filename: c.filename,
     category: c.category,
     excerpt: c.text.slice(0, excerptLength),
@@ -424,6 +431,8 @@ export function buildBatchFromPlanPrompts(
     ? options.pinnedRefMap
     : allChunksOrdered.map((c, i) => ({
         refId: `REF-${refOffset + i + 1}`,
+        docId: c.docId,
+        chunkIndex: c.chunkIndex,
         filename: c.filename,
         category: c.category,
         excerpt: c.text.slice(0, excerptLength),
@@ -432,14 +441,18 @@ export function buildBatchFromPlanPrompts(
 
   // コンテキストテキストは常にRAG結果から構築（実際の内容を参照させるため）。
   // ただし各チャンクの [REF-N] ラベルは pinnedRefMap と一致させる。
-  // pinnedRefMap を使う場合、RAGチャンクと pinnedRefMap のエントリを filename で照合してREF番号を付ける。
+  // pinnedRefMap を使う場合、RAGチャンクと pinnedRefMap のエントリを docId+chunkIndex で照合してREF番号を付ける。
+  // ★ 修正: filename+category 照合から docId+chunkIndex 照合に変更。
+  //    同一ファイルに複数チャンクが存在する場合に正しいREFが当たらない問題を解消。
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, localOffset = 0) => {
     if (!list.length) return ''
     const text = list.map((c) => {
       let refLabel: string
       if (options.pinnedRefMap) {
-        // pinnedRefMap の中から同じファイル名のエントリを探してREF番号を使う
-        const matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
+        // pinnedRefMap の中から同じ docId + chunkIndex のエントリを探してREF番号を使う
+        const matched = options.pinnedRefMap.find(
+          r => r.docId === c.docId && r.chunkIndex === c.chunkIndex
+        )
         refLabel = matched ? matched.refId : `REF-UNKNOWN`
       } else {
         // 従来ロジック: allChunksOrdered 内の位置から計算

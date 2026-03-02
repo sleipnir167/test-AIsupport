@@ -113,7 +113,7 @@ export async function POST(req: Request) {
         message: `プロンプト構築中 (Doc:${docChunks.length} Site:${siteChunks.length} Src:${sourceChunks.length})`,
       })
 
-      const { systemPrompt, userPrompt } = buildPrompts(
+      const { systemPrompt, userPrompt, refMap } = buildPrompts(
         project.name,
         project.targetSystem,
         allChunks,
@@ -153,7 +153,7 @@ export async function POST(req: Request) {
       // ── Step 4: パース・保存 ──────────────────────────
       send('progress', { stage: 3, message: 'テスト項目を保存中...' })
 
-      const items = parseTestItems(fullContent, projectId)
+      const items = parseTestItems(fullContent, projectId, refMap)
 
       if (targetPages && targetPages.length > 0) {
         await saveTestItems(items)
