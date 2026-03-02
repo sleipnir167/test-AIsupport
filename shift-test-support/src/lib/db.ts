@@ -289,6 +289,7 @@ const DEFAULT_SETTINGS: AdminSettings = {
   ],
   // バッチサイズ初期値
   defaultBatchSize: 50,
+  refExcerptLength: 250,
 }
 export async function getAdminSettings(): Promise<AdminSettings> {
   const saved = await redis.get<AdminSettings>(LOG_KEY.settings)
