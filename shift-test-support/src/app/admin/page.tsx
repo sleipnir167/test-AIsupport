@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: AdminSettings = {
   siteTitle:             'AI テスト支援システム',
   customModelList:       [],
   defaultBatchSize:      50,
+  refExcerptLength:      250,
 }
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
@@ -679,6 +680,38 @@ export default function AdminPage() {
               </div>
             </div>
 
+            {/* REF抜粋文字数 (■3) */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <h2 className="font-bold text-white mb-4 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-amber-400" />REF抜粋・出典情報の文字数
+              </h2>
+              <div>
+                <label className="text-xs text-gray-400 mb-1.5 block">
+                  出典情報「該当箇所」の表示文字数（REFマップのexcerpt・テスト項目書の出典モーダル一律適用）
+                </label>
+                <div className="flex gap-2 items-center flex-wrap">
+                  {[100, 250, 500, 800].map(v => (
+                    <button key={v} onClick={() => setSettings(s => ({ ...s, refExcerptLength: v }))}
+                      className={clsx('px-3 py-1.5 rounded-lg text-sm font-medium border transition-all',
+                        (settings.refExcerptLength ?? 250) === v
+                          ? 'bg-amber-700 text-white border-amber-700'
+                          : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500')}>
+                      {v}文字
+                    </button>
+                  ))}
+                  <input type="number" min={50} max={2000} step={50}
+                    value={settings.refExcerptLength ?? 250}
+                    onChange={e => setSettings(s => ({ ...s, refExcerptLength: parseInt(e.target.value) || 250 }))}
+                    className="w-28 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <span className="text-xs text-gray-500">文字</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-2">
+                  変更はプランニング実行後に反映されます。既存のREFマップには影響しません。<br />
+                  大きいほど出典根拠の可視性が上がりますが、プロンプト長が増加します（推奨: 250〜500）。
+                </p>
+              </div>
+            </div>
+
             <button onClick={saveSettings} disabled={saving}
               className="flex items-center gap-2 px-6 py-3 bg-shift-800 hover:bg-shift-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -963,11 +996,14 @@ function RefMapViewer({ password }: { password: string }) {
   const [projectId, setProjectId] = useState('')
   const [loading, setLoading] = useState(false)
   const [refMap, setRefMap] = useState<Array<{
-    refId: string; filename: string; category: string; excerpt: string; pageUrl?: string | null
+    refId: string; filename: string; category: string; excerpt: string; pageUrl?: string | null; chunkKey?: string
   }> | null>(null)
   const [error, setError] = useState('')
-  const [search, setSearch] = useState('')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // ■1: 複数同時展開 (Set で管理)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  // ■2: 2つの検索窓 (メタ絞り込み + 本文テキスト絞り込み)
+  const [searchMeta, setSearchMeta] = useState('')
+  const [searchText, setSearchText] = useState('')
 
   const CATEGORY_LABELS: Record<string, string> = {
     customer_doc:    '仕様書',
@@ -984,7 +1020,7 @@ function RefMapViewer({ password }: { password: string }) {
 
   const load = async () => {
     if (!projectId.trim()) { setError('プロジェクトIDを入力してください'); return }
-    setLoading(true); setError(''); setRefMap(null)
+    setLoading(true); setError(''); setRefMap(null); setExpandedIds(new Set())
     try {
       const res = await fetch(
         `/api/admin?action=refmap&projectId=${encodeURIComponent(projectId.trim())}`,
@@ -1000,14 +1036,47 @@ function RefMapViewer({ password }: { password: string }) {
     }
   }
 
-  const filtered = refMap?.filter(r => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return r.refId.toLowerCase().includes(q)
-      || r.filename.toLowerCase().includes(q)
-      || r.category.toLowerCase().includes(q)
-      || r.excerpt.toLowerCase().includes(q)
-  }) ?? []
+  // ■1: トグル関数（Set の add/delete）
+  const toggleExpand = (refId: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      next.has(refId) ? next.delete(refId) : next.add(refId)
+      return next
+    })
+  }
+
+  // 全展開 / 全閉じ
+  const expandAll = () => setExpandedIds(new Set(filtered.map(r => r.refId)))
+  const collapseAll = () => setExpandedIds(new Set())
+
+  // ■2: メタ絞り込み（REF番号・ファイル名・カテゴリ）と 本文テキスト絞り込みを分離
+  const filtered = (refMap ?? []).filter(r => {
+    // 検索1: メタ情報（REF番号・ファイル名・カテゴリ）
+    if (searchMeta) {
+      const q = searchMeta.toLowerCase()
+      const hitMeta = r.refId.toLowerCase().includes(q)
+        || r.filename.toLowerCase().includes(q)
+        || r.category.toLowerCase().includes(q)
+        || (CATEGORY_LABELS[r.category] ?? '').toLowerCase().includes(q)
+      if (!hitMeta) return false
+    }
+    // 検索2: 抜粋本文
+    if (searchText) {
+      const q = searchText.toLowerCase()
+      if (!r.excerpt.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
+  // 本文マッチ行のハイライト（検索2がある場合のみ）
+  const highlightExcerpt = (text: string) => {
+    if (!searchText) return text
+    const q = searchText.toLowerCase()
+    // マッチする行だけ返す
+    const lines = text.split('\n')
+    const matchedLines = lines.filter(l => l.toLowerCase().includes(q))
+    return matchedLines.length > 0 ? matchedLines.join('\n') : text
+  }
 
   return (
     <div className="space-y-5">
@@ -1052,22 +1121,60 @@ function RefMapViewer({ password }: { password: string }) {
       {/* 結果 */}
       {refMap !== null && (
         <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-shift-400" />
-              <span className="font-semibold text-white">REFマップ</span>
-              <span className="text-xs text-gray-400 font-mono">{refMap.length}件 / 表示:{filtered.length}件</span>
+          {/* ヘッダー + 検索 */}
+          <div className="px-5 py-3 border-b border-gray-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-shift-400" />
+                <span className="font-semibold text-white">REFマップ</span>
+                <span className="text-xs text-gray-400 font-mono">{refMap.length}件 / 表示:{filtered.length}件</span>
+              </div>
+              {/* 全展開・全閉じ ボタン (■1) */}
+              <div className="flex gap-2">
+                <button onClick={expandAll}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors">
+                  全展開
+                </button>
+                <button onClick={collapseAll}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors">
+                  全閉じ
+                </button>
+              </div>
             </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="REF-N・ファイル名・本文で絞り込み"
-                className="bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-200 outline-none focus:border-shift-600 w-60"
-              />
+
+            {/* ■2: 2つの検索窓 */}
+            <div className="flex gap-2 flex-wrap">
+              {/* 検索1: メタ情報絞り込み */}
+              <div className="relative flex-1 min-w-48">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                <input
+                  type="text"
+                  value={searchMeta}
+                  onChange={e => setSearchMeta(e.target.value)}
+                  placeholder="REF番号・ファイル名・カテゴリで絞り込み"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-200 outline-none focus:border-shift-600"
+                />
+              </div>
+              {/* 検索2: 本文テキスト絞り込み (■2) */}
+              <div className="relative flex-1 min-w-48">
+                <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-amber-500" />
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={e => setSearchText(e.target.value)}
+                  placeholder="抜粋本文テキストで絞り込み（マッチ行のみ表示）"
+                  className="w-full bg-gray-800 border border-amber-900/40 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-200 outline-none focus:border-amber-700"
+                />
+              </div>
             </div>
+            {(searchMeta || searchText) && (
+              <p className="text-xs text-gray-500">
+                {searchMeta && <span className="text-blue-400">メタ:「{searchMeta}」</span>}
+                {searchMeta && searchText && <span className="mx-1">+</span>}
+                {searchText && <span className="text-amber-400">本文:「{searchText}」</span>}
+                {' '}→ {filtered.length}件ヒット
+              </p>
+            )}
           </div>
 
           {refMap.length === 0 ? (
@@ -1076,16 +1183,23 @@ function RefMapViewer({ password }: { password: string }) {
               <p className="text-sm">このプロジェクトのREFマップは存在しません</p>
               <p className="text-xs">プランニングを実行するとREFマップが保存されます</p>
             </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-10 text-center text-gray-500">
+              <Search className="w-8 h-8 mx-auto opacity-30 mb-2" />
+              <p className="text-sm">検索条件に一致するREFがありません</p>
+            </div>
           ) : (
             <div className="divide-y divide-gray-800/60">
               {filtered.map(r => {
                 const catColor = CATEGORY_COLORS[r.category] ?? 'bg-gray-700/60 text-gray-300 border-gray-600'
                 const catLabel = CATEGORY_LABELS[r.category] ?? r.category
-                const isExpanded = expandedId === r.refId
+                // ■1: Set で展開状態管理
+                const isExpanded = expandedIds.has(r.refId)
+                const excerptDisplay = highlightExcerpt(r.excerpt)
                 return (
                   <div key={r.refId} className="hover:bg-gray-800/40 transition-colors">
                     <button
-                      onClick={() => setExpandedId(isExpanded ? null : r.refId)}
+                      onClick={() => toggleExpand(r.refId)}
                       className="w-full flex items-center gap-3 px-5 py-3 text-left">
                       <ChevronRight className={clsx('w-3.5 h-3.5 text-gray-500 flex-shrink-0 transition-transform', isExpanded && 'rotate-90')} />
                       {/* REF番号 */}
@@ -1094,6 +1208,10 @@ function RefMapViewer({ password }: { password: string }) {
                       <span className={clsx('text-xs px-2 py-0.5 rounded-full border flex-shrink-0', catColor)}>{catLabel}</span>
                       {/* ファイル名 */}
                       <span className="text-sm text-gray-200 flex-1 truncate">{r.filename}</span>
+                      {/* 本文ヒット表示 */}
+                      {searchText && r.excerpt.toLowerCase().includes(searchText.toLowerCase()) && (
+                        <span className="flex-shrink-0 text-xs bg-amber-900/40 text-amber-300 border border-amber-700/50 px-2 py-0.5 rounded-full">本文一致</span>
+                      )}
                       {/* URL */}
                       {r.pageUrl && (
                         <a href={r.pageUrl} target="_blank" rel="noopener noreferrer"
@@ -1106,8 +1224,28 @@ function RefMapViewer({ password }: { password: string }) {
                     {isExpanded && (
                       <div className="px-5 pb-4 pl-[calc(1.25rem+1rem+3.5rem)]">
                         <div className="bg-gray-800 rounded-xl p-4">
-                          <p className="text-xs text-gray-500 mb-2 font-semibold">📄 抜粋テキスト（先頭800文字）</p>
-                          <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{r.excerpt}</pre>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-gray-500 font-semibold">
+                              📄 抜粋テキスト{searchText ? '（本文マッチ行のみ）' : ''}
+                            </p>
+                            {r.chunkKey && (
+                              <span className="text-xs text-gray-600 font-mono">{r.chunkKey}</span>
+                            )}
+                          </div>
+                          <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                            {searchText ? (
+                              // ■2: 本文検索時はマッチ行をハイライト表示
+                              excerptDisplay.split('\n').map((line, i) => {
+                                const q = searchText.toLowerCase()
+                                const hit = line.toLowerCase().includes(q)
+                                return hit ? (
+                                  <span key={i} className="bg-amber-900/40 rounded">{line}\n</span>
+                                ) : (
+                                  <span key={i} className="text-gray-500">{line}\n</span>
+                                )
+                              })
+                            ) : r.excerpt}
+                          </pre>
                         </div>
                       </div>
                     )}

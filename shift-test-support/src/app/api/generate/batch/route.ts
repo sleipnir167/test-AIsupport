@@ -6,8 +6,9 @@
  */
 import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings, getRefMap } from '@/lib/db'
-import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
+import type { RefMapEntry } from '@/lib/ai'
 import { searchChunks } from '@/lib/vector'
+import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
 import OpenAI from 'openai'
 import type { TestPlanBatch } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
@@ -140,6 +141,7 @@ export async function POST(req: Request) {
           refOffset,
           // ★ プランニング時のREFマップがあれば使用してREFずれを防ぐ
           pinnedRefMap: savedRefMap ?? undefined,
+          excerptLength: adminSettings.refExcerptLength ?? 250,
         }
       )
     } else {
@@ -238,7 +240,7 @@ export async function POST(req: Request) {
     const chunkExcerptMap = new Map<string, string>()
     for (const c of allChunks) {
       const key = `${c.docId}-${c.chunkIndex}`
-      chunkExcerptMap.set(key, c.text.slice(0, 800))
+      chunkExcerptMap.set(key, c.text.slice(0, adminSettings.refExcerptLength ?? 250))
     }
     const items = parseTestItems(fullContent, projectId, refMap ?? [], chunkExcerptMap)
     log(jobId, `Parsed: ${items.length} items`)

@@ -13,6 +13,7 @@ export interface GenerateOptions {
   perspectiveWeights?: PerspectiveWeight[]
   targetPages?: Array<{ url: string; title: string }> | null
   customSystemPrompt?: string
+  excerptLength?: number  // REF抜粋文字数（デフォルト: 250）
 }
 
 // refMapの型をエクスポート
@@ -22,9 +23,6 @@ export interface RefMapEntry {
   category: string
   excerpt: string
   pageUrl?: string | null
-  /** チャンク単位で一意に識別するキー（"docId-chunkIndex"形式）。
-   *  pinnedRefMapでの照合精度向上のため追加。省略時はfilename+categoryで照合（後方互換）。*/
-  chunkKey?: string
 }
 
 export interface BuildPromptsResult {
@@ -43,6 +41,7 @@ export function buildPrompts(
   const perspectives = options.perspectives || ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']
   const perspectiveWeights = options.perspectiveWeights
   const targetPages = options.targetPages
+  const excerptLength = options.excerptLength ?? 250
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
@@ -54,9 +53,8 @@ export function buildPrompts(
     refId: `REF-${i + 1}`,
     filename: c.filename,
     category: c.category,
-    excerpt: c.text.slice(0, 800),
+    excerpt: c.text.slice(0, excerptLength),
     pageUrl: c.pageUrl,
-    chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
 
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
@@ -173,13 +171,7 @@ function repairJsonArray(raw: string): string {
 export function parseTestItems(
   content: string,
   projectId: string,
-  refMap: RefMapEntry[] = [],
-  /**
-   * バッチ実行時のRAGチャンクから構築したマップ。
-   * キー: chunkKey（"docId-chunkIndex"）, 値: チャンクテキスト先頭800文字。
-   * 指定された場合、refMapのexcerptよりこちらを優先して「該当箇所」表示に使う（■3修正）。
-   */
-  chunkExcerptMap?: Map<string, string>
+  refMap: RefMapEntry[] = []
 ): TestItem[] {
   let jsonStr: string
   try {
@@ -221,14 +213,11 @@ export function parseTestItems(
         if (!sr.refId) continue
         const meta = refIndex.get(sr.refId)
         if (meta) {
-          // chunkKeyでchunkExcerptMapを引く。なければmeta.excerptにフォールバック（■3修正）
-          const liveExcerpt = meta.chunkKey ? chunkExcerptMap?.get(meta.chunkKey) : undefined
-          const excerptBody = liveExcerpt ?? meta.excerpt
           sourceRefs.push({
             refId: sr.refId,          // REF-N番号を保持して画面で表示できるようにする
             filename: meta.filename,
             category: meta.category,
-            excerpt: excerptBody + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
+            excerpt: meta.excerpt + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
             pageUrl: meta.pageUrl ?? undefined,
           })
         } else {
@@ -276,6 +265,7 @@ export interface PlanningOptions {
   customSystemPrompt?: string          // バッチ実行兼用（後方互換）
   planningSystemPrompt?: string        // プランニング専用上書き
   testPhase?: string  // テスト工程（単体テスト/結合テスト/システムテスト等）
+  excerptLength?: number  // REF抜粋文字数（デフォルト: 250）
 }
 
 export interface BuildPlanPromptsResult {
@@ -291,6 +281,7 @@ export function buildPlanningPrompts(
   options: PlanningOptions
 ): BuildPlanPromptsResult {
   const { totalItems, batchSize, perspectiveWeights, targetPages, testPhase } = options
+  const excerptLength = options.excerptLength ?? 250
   const perspectives = options.perspectives || ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性']
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
@@ -302,9 +293,8 @@ export function buildPlanningPrompts(
     refId: `REF-${i + 1}`,
     filename: c.filename,
     category: c.category,
-    excerpt: c.text.slice(0, 800),
+    excerpt: c.text.slice(0, excerptLength),
     pageUrl: c.pageUrl,
-    chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
 
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, offset = 0) => {
@@ -408,6 +398,7 @@ export interface BatchFromPlanOptions {
    * バッチをまたいでREF番号が一致しないずれを完全に防ぐことができる。
    */
   pinnedRefMap?: RefMapEntry[]
+  excerptLength?: number  // REF抜粋文字数（デフォルト: 250）
 }
 
 export function buildBatchFromPlanPrompts(
@@ -418,6 +409,7 @@ export function buildBatchFromPlanPrompts(
 ): BuildPromptsResult {
   const { batchId, totalBatches, category, perspective, titles } = options
   const refOffset = options.refOffset ?? 0
+  const excerptLength = options.excerptLength ?? 250
 
   const docChunks    = chunks.filter(c => c.category === 'customer_doc' || c.category === 'MSOK_knowledge')
   const siteChunks   = chunks.filter(c => c.category === 'site_analysis')
@@ -433,37 +425,20 @@ export function buildBatchFromPlanPrompts(
         refId: `REF-${refOffset + i + 1}`,
         filename: c.filename,
         category: c.category,
-        excerpt: c.text.slice(0, 800),
+        excerpt: c.text.slice(0, excerptLength),
         pageUrl: c.pageUrl,
-        chunkKey: `${c.docId}-${c.chunkIndex}`,
       }))
 
   // コンテキストテキストは常にRAG結果から構築（実際の内容を参照させるため）。
   // ただし各チャンクの [REF-N] ラベルは pinnedRefMap と一致させる。
-  //
-  // 【照合優先順位】
-  //   1. chunkKey（docId-chunkIndex）による完全一致  ← 最も正確
-  //   2. filename + category による一致              ← 同一ファイルの別チャンクでずれが起きる旧ロジック
-  //      ただし同名エントリが複数ある場合は filename+category+excerpt先頭50文字で近似一致
+  // pinnedRefMap を使う場合、RAGチャンクと pinnedRefMap のエントリを filename で照合してREF番号を付ける。
   const buildContext = (list: VectorMetadata[], label: string, maxLen: number, localOffset = 0) => {
     if (!list.length) return ''
     const text = list.map((c) => {
       let refLabel: string
       if (options.pinnedRefMap) {
-        const chunkKey = `${c.docId}-${c.chunkIndex}`
-        // 優先1: chunkKey で正確に一致するエントリを探す
-        let matched = options.pinnedRefMap.find(r => r.chunkKey === chunkKey)
-        if (!matched) {
-          // 優先2: filename+category+excerpt先頭50文字で近似一致（chunkKeyなし旧データ対応）
-          const excerpt50 = c.text.slice(0, 50)
-          matched = options.pinnedRefMap.find(
-            r => r.filename === c.filename && r.category === c.category && r.excerpt.startsWith(excerpt50.slice(0, 30))
-          )
-        }
-        if (!matched) {
-          // フォールバック: filename+category（従来ロジック、最終手段）
-          matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
-        }
+        // pinnedRefMap の中から同じファイル名のエントリを探してREF番号を使う
+        const matched = options.pinnedRefMap.find(r => r.filename === c.filename && r.category === c.category)
         refLabel = matched ? matched.refId : `REF-UNKNOWN`
       } else {
         // 従来ロジック: allChunksOrdered 内の位置から計算

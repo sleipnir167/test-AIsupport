@@ -130,6 +130,7 @@ export async function POST(req: Request) {
         planningSystemPrompt: promptTemplate.planningSystemPrompt || undefined,
         customSystemPrompt: promptTemplate.systemPrompt,
         testPhase,
+        excerptLength: adminSettings.refExcerptLength ?? 250,
       }
     )
 
