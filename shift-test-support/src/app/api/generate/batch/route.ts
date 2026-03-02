@@ -235,7 +235,15 @@ export async function POST(req: Request) {
       clearTimeout(abortTimer)
     }
 
-    const items = parseTestItems(fullContent, projectId, refMap ?? [])
+    const items = parseTestItems(fullContent, projectId, refMap ?? [], (() => {
+      // ■3修正: バッチ実際参照チャンクのテキストをマップ化して渡す
+      const m = new Map<string, string>()
+      for (const c of allChunks) {
+        const key = `${c.filename}__${c.category}`
+        if (!m.has(key)) m.set(key, c.text.slice(0, 250))
+      }
+      return m
+    })())
     log(jobId, `Parsed: ${items.length} items`)
 
     const itemsWithOrder = items.map((item, i) => ({
