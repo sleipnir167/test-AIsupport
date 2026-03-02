@@ -171,7 +171,8 @@ function repairJsonArray(raw: string): string {
 export function parseTestItems(
   content: string,
   projectId: string,
-  refMap: RefMapEntry[] = []
+  refMap: RefMapEntry[] = [],
+  chunkExcerptMap?: Map<string, string>   
 ): TestItem[] {
   let jsonStr: string
   try {

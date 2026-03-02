@@ -242,7 +242,7 @@ export async function POST(req: Request) {
       const key = `${c.docId}-${c.chunkIndex}`
       chunkExcerptMap.set(key, c.text.slice(0, adminSettings.refExcerptLength ?? 250))
     }
-    const items = parseTestItems(fullContent, projectId, refMap ?? [])
+    const items = parseTestItems(fullContent, projectId, refMap ?? [], chunkExcerptMap)
     log(jobId, `Parsed: ${items.length} items`)
 
     const itemsWithOrder = items.map((item, i) => ({
