@@ -54,7 +54,7 @@ export function buildPrompts(
     refId: `REF-${i + 1}`,
     filename: c.filename,
     category: c.category,
-    excerpt: c.text.slice(0, 250),
+    excerpt: c.text.slice(0, 800),
     pageUrl: c.pageUrl,
     chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
@@ -176,7 +176,7 @@ export function parseTestItems(
   refMap: RefMapEntry[] = [],
   /**
    * バッチ実行時のRAGチャンクから構築したマップ。
-   * キー: chunkKey（"docId-chunkIndex"）, 値: チャンクテキスト先頭250文字。
+   * キー: chunkKey（"docId-chunkIndex"）, 値: チャンクテキスト先頭800文字。
    * 指定された場合、refMapのexcerptよりこちらを優先して「該当箇所」表示に使う（■3修正）。
    */
   chunkExcerptMap?: Map<string, string>
@@ -302,7 +302,7 @@ export function buildPlanningPrompts(
     refId: `REF-${i + 1}`,
     filename: c.filename,
     category: c.category,
-    excerpt: c.text.slice(0, 250),
+    excerpt: c.text.slice(0, 800),
     pageUrl: c.pageUrl,
     chunkKey: `${c.docId}-${c.chunkIndex}`,
   }))
@@ -433,7 +433,7 @@ export function buildBatchFromPlanPrompts(
         refId: `REF-${refOffset + i + 1}`,
         filename: c.filename,
         category: c.category,
-        excerpt: c.text.slice(0, 250),
+        excerpt: c.text.slice(0, 800),
         pageUrl: c.pageUrl,
         chunkKey: `${c.docId}-${c.chunkIndex}`,
       }))

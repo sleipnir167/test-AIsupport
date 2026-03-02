@@ -1106,7 +1106,7 @@ function RefMapViewer({ password }: { password: string }) {
                     {isExpanded && (
                       <div className="px-5 pb-4 pl-[calc(1.25rem+1rem+3.5rem)]">
                         <div className="bg-gray-800 rounded-xl p-4">
-                          <p className="text-xs text-gray-500 mb-2 font-semibold">📄 抜粋テキスト（先頭250文字）</p>
+                          <p className="text-xs text-gray-500 mb-2 font-semibold">📄 抜粋テキスト（先頭800文字）</p>
                           <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{r.excerpt}</pre>
                         </div>
                       </div>
