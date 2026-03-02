@@ -68,6 +68,7 @@ export type Automatable = 'YES' | 'NO' | 'CONSIDER'
 export type TestPerspective = '機能テスト' | '正常系' | '異常系' | '境界値' | 'セキュリティ' | '操作性' | '性能'
 
 export interface SourceRef {
+  refId?: string        // REFマップ番号（例: "REF-3"）
   filename: string      // 出典ファイル名（例: "要件定義書.pdf"）
   category: string      // customer_doc / MSOK_knowledge / source_code / site_analysis
   excerpt: string       // 該当箇所の抜粋（200文字程度）

@@ -136,10 +136,21 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
           ) : refs.map((ref, i) => {
             const meta = CATEGORY_META[ref.category] ?? CATEGORY_META.customer_doc
             const Icon = meta.icon
+            // excerpt から【導出根拠】を分離して表示を整理する
+            const excerptParts = ref.excerpt.split('\n\n【導出根拠】')
+            const bodyText = excerptParts[0]
+            const derivedReason = excerptParts[1]
             return (
               <div key={i} className="border border-gray-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border', meta.color)}>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  {/* REF-N バッジ */}
+                  {ref.refId && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold bg-gray-900 text-amber-400 border border-gray-700 flex-shrink-0">
+                      {ref.refId}
+                    </span>
+                  )}
+                  {/* カテゴリバッジ */}
+                  <span className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border flex-shrink-0', meta.color)}>
                     <Icon className="w-3 h-3" />{meta.label}
                   </span>
                   <span className="text-sm font-semibold text-gray-800 truncate flex-1">{ref.filename}</span>
@@ -150,10 +161,17 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
                     </a>
                   )}
                 </div>
-                {ref.excerpt && (
+                {/* 導出根拠（AIがこのテスト項目との関連を説明した文章） */}
+                {derivedReason && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                    <p className="text-xs text-amber-700 font-semibold mb-0.5">🔗 導出根拠</p>
+                    <p className="text-xs text-amber-800 leading-relaxed">{derivedReason}</p>
+                  </div>
+                )}
+                {bodyText && (
                   <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs text-gray-500 mb-1 font-medium">📄 該当箇所</p>
-                    <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{ref.excerpt}</p>
+                    <p className="text-xs text-gray-500 mb-1 font-medium">📄 参照箇所</p>
+                    <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{bodyText}</p>
                   </div>
                 )}
               </div>
@@ -204,13 +222,18 @@ function MetaReasonModal({ type, value, aiReason, onClose }: {
         {/* Body */}
         <div className="overflow-y-auto p-5 space-y-4 max-h-[60vh]">
           {/* AI根拠（個別） */}
-          {aiReason && (
-            <div className="bg-shift-50 border border-shift-200 rounded-xl p-4 flex items-start gap-2">
-              <BookOpen className="w-4 h-4 text-shift-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-shift-700 mb-1">🤖 AIによるこの項目への判定根拠</p>
-                <p className="text-sm text-shift-900 leading-relaxed">{aiReason}</p>
+          {aiReason ? (
+            <div className="bg-gradient-to-br from-shift-50 to-blue-50 border-2 border-shift-300 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-base">🤖</span>
+                <p className="text-xs font-bold text-shift-700 uppercase tracking-wide">AIによるこの項目への判定根拠</p>
               </div>
+              <p className="text-sm text-gray-800 leading-relaxed font-medium">{aiReason}</p>
+            </div>
+          ) : (
+            <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl p-3 flex items-center gap-2">
+              <HelpCircle className="w-4 h-4 text-gray-300 flex-shrink-0" />
+              <p className="text-xs text-gray-400">この項目にはAI判定根拠がありません（生成時のプロンプトに根拠フィールドが含まれていない場合）</p>
             </div>
           )}
           <div>
@@ -262,14 +285,27 @@ function SourceBadge({ item, onClick }: { item: TestItem; onClick: () => void })
 }
 
 // ─── クリッカブルバッジ ───────────────────────────────────────
-function ClickableBadge({ className, onClick, children }: {
-  className: string; onClick: () => void; children: React.ReactNode
+function ClickableBadge({ className, onClick, children, hasAiReason }: {
+  className: string; onClick: () => void; children: React.ReactNode; hasAiReason?: boolean
 }) {
   return (
-    <button onClick={onClick}
-      className={clsx('badge text-xs cursor-pointer hover:opacity-80 hover:shadow-sm transition-all flex items-center gap-0.5', className)}>
+    <button
+      onClick={onClick}
+      title={hasAiReason ? 'AIによる判定根拠あり — クリックで確認' : '判定基準を確認 — クリックで確認'}
+      className={clsx(
+        'badge text-xs cursor-pointer transition-all flex items-center gap-1',
+        'hover:scale-105 hover:shadow-md active:scale-95',
+        hasAiReason
+          // 根拠あり: リング強調 + わずかなパルス感
+          ? 'ring-2 ring-offset-1 ring-shift-400/60 hover:ring-shift-500'
+          : 'hover:opacity-80',
+        className
+      )}>
       {children}
-      <HelpCircle className="w-2.5 h-2.5 opacity-50" />
+      {hasAiReason
+        ? <span className="text-[9px] font-bold opacity-90">🤖</span>
+        : <HelpCircle className="w-2.5 h-2.5 opacity-40" />
+      }
     </button>
   )
 }
@@ -527,6 +563,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                               <td className="text-center">
                                 <ClickableBadge
                                   className={priorityColors[item.priority]}
+                                  hasAiReason={!!item.priorityReason}
                                   onClick={() => setMetaModal({ type: 'priority', value: item.priority, aiReason: item.priorityReason })}>
                                   {priorityLabels[item.priority]}
                                 </ClickableBadge>
@@ -534,6 +571,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                               <td className="text-center">
                                 <ClickableBadge
                                   className={automatableColors[item.automatable]}
+                                  hasAiReason={!!item.automatableReason}
                                   onClick={() => setMetaModal({ type: 'automatable', value: item.automatable, aiReason: item.automatableReason })}>
                                   {automatableLabels[item.automatable]}
                                 </ClickableBadge>

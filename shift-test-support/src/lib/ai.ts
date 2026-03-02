@@ -212,6 +212,7 @@ export function parseTestItems(
         const meta = refIndex.get(sr.refId)
         if (meta) {
           sourceRefs.push({
+            refId: sr.refId,          // REF-N番号を保持して画面で表示できるようにする
             filename: meta.filename,
             category: meta.category,
             excerpt: meta.excerpt + (sr.reason ? `\n\n【導出根拠】${sr.reason}` : ''),
@@ -220,6 +221,7 @@ export function parseTestItems(
         } else {
           // REF番号が見つからない場合でも理由を保持
           sourceRefs.push({
+            refId: sr.refId,
             filename: sr.refId,
             category: 'unknown',
             excerpt: sr.reason || '',
