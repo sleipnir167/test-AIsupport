@@ -276,7 +276,7 @@ export async function POST(req: Request) {
     const aiStream = await client.chat.completions.create({
       model,
       messages,
-      response_format: responseFormat as OpenAI.ResponseFormatJSONObject,
+      response_format: (responseFormat as unknown) as OpenAI.ResponseFormatJSONObject,
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
       stream: true,
