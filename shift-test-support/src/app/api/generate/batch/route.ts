@@ -85,6 +85,7 @@ function buildMessages(
           {
             type: 'text',
             text: systemPrompt,
+            // @ts-ignore: Anthropic/OpenRouter用のプロパティを許可
             cache_control: { type: 'ephemeral' },
           },
         ],
@@ -96,6 +97,7 @@ function buildMessages(
           {
             type: 'text',
             text: userPrompt,
+            // @ts-ignore: Anthropic/OpenRouter用のプロパティを許可
             cache_control: { type: 'ephemeral' },
           },
         ],
