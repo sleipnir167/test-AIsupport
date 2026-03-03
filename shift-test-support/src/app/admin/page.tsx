@@ -31,8 +31,8 @@ const DEFAULT_SETTINGS: AdminSettings = {
   customModelList:       [],
   defaultBatchSize:      50,
   refExcerptLength:      250,
-  useHybridSearch: true,
-  useReranking: false,
+  useHybridSearch:       false,
+  useReranking:          false,
 }
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
