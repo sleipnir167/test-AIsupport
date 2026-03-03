@@ -305,6 +305,14 @@ export interface CustomModelEntry {
   feature: string     // 特徴説明
   speed: '爆速' | '高速' | '標準'
   isFree?: boolean
+  /**
+   * JSON 出力モード
+   *   'json_schema' — OpenAI Structured Outputs（スキーマ完全準拠保証）
+   *   'json_object' — JSON モード（整形は保証されるがスキーマ準拠は保証外）
+   *   'none'        — response_format を送らない（一部モデルでエラー回避）
+   *   未設定時は inferResponseFormat() で自動推定
+   */
+  responseFormat?: 'json_schema' | 'json_object' | 'none'
 }
 
 // ─── テストプラン（プランニング結果） ───────────────────────────

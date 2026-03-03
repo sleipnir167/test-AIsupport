@@ -278,14 +278,14 @@ const DEFAULT_SETTINGS: AdminSettings = {
   siteTitle:          'AI テスト支援システム',
   // モデルリスト（管理者が追加・編集可能）
   customModelList: [
-    { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速' as const },
-    { id: 'google/gemini-2.5-flash',           label: 'Gemini 2.5 Flash',       inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',              speed: '爆速' as const },
-    { id: 'google/gemini-3-flash-preview',     label: 'Gemini 3 Flash Preview', inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成',    speed: '爆速' as const },
-    { id: 'openai/gpt-5-nano',                 label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',         speed: '爆速' as const },
-    { id: 'openai/gpt-5.2',                    label: 'GPT-5.2',                inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' as const },
-    { id: 'anthropic/claude-sonnet-4.6',       label: 'Claude Sonnet 4.6',      inputCost: '$3.00', outputCost: '$15.00', feature: 'Anthropic最新。論理的な分析に最強',       speed: '標準' as const },
-    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B',          inputCost: '$0.12', outputCost: '$0.30',  feature: 'Meta製OSS。コスパ良好',                  speed: '高速' as const },
-    { id: 'deepseek/deepseek-r1-0528:free',    label: 'DeepSeek R1 (free)',      inputCost: '無料',  outputCost: '無料',   feature: 'OpenRouterの無料枠。お試しに最適',        speed: '高速' as const, isFree: true },
+    { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速' as const, responseFormat: 'json_object' as const },
+    { id: 'google/gemini-2.5-flash',           label: 'Gemini 2.5 Flash',       inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',              speed: '爆速' as const, responseFormat: 'json_object' as const },
+    { id: 'google/gemini-3-flash-preview',     label: 'Gemini 3 Flash Preview', inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成',    speed: '爆速' as const, responseFormat: 'json_object' as const },
+    { id: 'openai/gpt-5-nano',                 label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',         speed: '爆速' as const, responseFormat: 'json_schema' as const },
+    { id: 'openai/gpt-5.2',                    label: 'GPT-5.2',                inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' as const, responseFormat: 'json_schema' as const },
+    { id: 'anthropic/claude-sonnet-4.6',       label: 'Claude Sonnet 4.6',      inputCost: '$3.00', outputCost: '$15.00', feature: 'Anthropic最新。論理的な分析に最強',       speed: '標準' as const, responseFormat: 'json_object' as const },
+    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B',          inputCost: '$0.12', outputCost: '$0.30',  feature: 'Meta製OSS。コスパ良好',                  speed: '高速' as const, responseFormat: 'json_object' as const },
+    { id: 'deepseek/deepseek-r1-0528:free',    label: 'DeepSeek R1 (free)',      inputCost: '無料',  outputCost: '無料',   feature: 'OpenRouterの無料枠。お試しに最適',        speed: '高速' as const, isFree: true, responseFormat: 'json_object' as const },
   ],
   // バッチサイズ初期値
   defaultBatchSize: 50,

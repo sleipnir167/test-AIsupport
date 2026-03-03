@@ -13,10 +13,10 @@ import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings, getRefMap } from '@/lib/db'
 import type { RefMapEntry } from '@/lib/ai'
 import { searchChunks } from '@/lib/vector'
-import { buildBatchFromPlanPrompts, parseTestItems, getResponseFormat, TEST_ITEM_JSON_SCHEMA, type BuildPromptsResult } from '@/lib/ai'
+import { buildBatchFromPlanPrompts, parseTestItems, getResponseFormat, inferResponseFormat, TEST_ITEM_JSON_SCHEMA, type BuildPromptsResult } from '@/lib/ai'
 import { rerankChunks } from '@/lib/rerank'
 import OpenAI from 'openai'
-import type { TestPlanBatch } from '@/types'
+import type { TestPlanBatch, CustomModelEntry } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
 export const maxDuration = 60
@@ -85,7 +85,6 @@ function buildMessages(
           {
             type: 'text',
             text: systemPrompt,
-            // @ts-ignore: Anthropic/OpenRouter用のプロパティを許可
             cache_control: { type: 'ephemeral' },
           },
         ],
@@ -97,7 +96,6 @@ function buildMessages(
           {
             type: 'text',
             text: userPrompt,
-            // @ts-ignore: Anthropic/OpenRouter用のプロパティを許可
             cache_control: { type: 'ephemeral' },
           },
         ],
@@ -264,9 +262,13 @@ export async function POST(req: Request) {
     }, Math.max(remaining, 1000))
 
     // ─── ① Structured Outputs ─────────────────────────────────────────────
-    // OpenAI: json_schema（スキーマ準拠を保証、repairJsonArray 不要に）
-    // その他: json_object（JSON モード、repairJsonArray はフォールバックとして残す）
-    const responseFormat = getResponseFormat(model, TEST_ITEM_JSON_SCHEMA)
+    // モデルリストに responseFormat 設定があればそれを優先、なければ自動推定。
+    // undefined が返った場合（mode=none）は response_format を送らない。
+    const modelEntry = adminSettings.customModelList?.find(
+      (m: CustomModelEntry) => m.id === model
+    )
+    const responseFormat = getResponseFormat(model, TEST_ITEM_JSON_SCHEMA, modelEntry)
+    log(jobId, `responseFormat=${responseFormat?.type ?? 'none'} (inferred: ${inferResponseFormat(model)}, override: ${modelEntry?.responseFormat ?? '-'})`)
 
     // ─── ② Prompt Caching ─────────────────────────────────────────────────
     // buildMessages() が Anthropic モデルの場合 cache_control を付与する。
@@ -276,7 +278,8 @@ export async function POST(req: Request) {
     const aiStream = await client.chat.completions.create({
       model,
       messages,
-      response_format: (responseFormat as unknown) as OpenAI.ResponseFormatJSONObject,
+      // response_format が undefined（mode=none）の場合はパラメータ自体を省略
+      ...(responseFormat ? { response_format: responseFormat as OpenAI.ResponseFormatJSONObject } : {}),
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
       stream: true,

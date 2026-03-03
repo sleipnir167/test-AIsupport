@@ -13,8 +13,8 @@ import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
 import { getProject, saveAILog, getPromptTemplate, getAdminSettings, saveTestPlan, saveRefMap } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
-import { buildPlanningPrompts, getResponseFormat, TEST_PLAN_JSON_SCHEMA } from '@/lib/ai'
-import type { TestPlan, TestPlanBatch } from '@/types'
+import { buildPlanningPrompts, getResponseFormat, inferResponseFormat, TEST_PLAN_JSON_SCHEMA } from '@/lib/ai'
+import type { TestPlan, TestPlanBatch, CustomModelEntry } from '@/types'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -167,15 +167,19 @@ export async function POST(req: Request) {
     )
 
     // ── LLM呼び出し（非ストリーミング：プランは全体が必要） ────
-    // ① Structured Outputs: OpenAI は json_schema、他は json_object
+    // ① Structured Outputs: モデルリスト設定優先、なければ自動推定
     // ② Prompt Caching: buildMessages() が Anthropic 時に cache_control を付与
-    const responseFormat = getResponseFormat(model, TEST_PLAN_JSON_SCHEMA)
+    const modelEntry = adminSettings.customModelList?.find(
+      (m: CustomModelEntry) => m.id === model
+    )
+    const responseFormat = getResponseFormat(model, TEST_PLAN_JSON_SCHEMA, modelEntry)
     const messages = buildMessages(model, systemPrompt, userPrompt)
 
     const res = await client.chat.completions.create({
       model,
       messages,
-      response_format: (responseFormat as unknown) as OpenAI.ResponseFormatJSONObject,
+      // response_format が undefined（mode=none）の場合はパラメータ自体を省略
+      ...(responseFormat ? { response_format: responseFormat as OpenAI.ResponseFormatJSONObject } : {}),
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
     })

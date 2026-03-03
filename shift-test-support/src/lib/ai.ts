@@ -226,28 +226,63 @@ export const TEST_PLAN_JSON_SCHEMA = {
 } as const
 
 /**
- * モデルIDから最適な response_format を決定する。
+ * モデルIDからJSON出力モードを自動推定する。
  *
- * - openai/* → json_schema（Structured Outputs）
- * - その他  → json_object（JSON モード）
+ * OpenRouter のモデルIDプレフィックスで判定：
+ *   openai/*       → json_schema（Structured Outputs）
+ *   google/*       → json_object（Gemini はJSON modeをサポート）
+ *   anthropic/*    → json_object（OpenRouter 経由JSON mode対応）
+ *   deepseek/*     → json_object
+ *   meta-llama/*   → json_object
+ *   mistralai/*    → json_object
+ *   その他 / 不明  → none（安全側に倒す）
  *
- * OpenRouter 経由の非 OpenAI モデルは json_schema の strict モードをサポートしない
- * ケースがあるため json_object にフォールバックする。
+ * AI_PROVIDER=openai（ネイティブ）の場合は常に json_schema。
+ */
+export function inferResponseFormat(
+  modelId: string
+): 'json_schema' | 'json_object' | 'none' {
+  // ネイティブ OpenAI
+  if (process.env.AI_PROVIDER === 'openai') return 'json_schema'
+
+  const id = modelId.toLowerCase()
+
+  // OpenRouter 経由の OpenAI モデル
+  if (id.startsWith('openai/')) return 'json_schema'
+
+  // JSON object mode をサポートするプロバイダ
+  if (
+    id.startsWith('google/') ||
+    id.startsWith('anthropic/') ||
+    id.startsWith('deepseek/') ||
+    id.startsWith('meta-llama/') ||
+    id.startsWith('mistralai/') ||
+    id.startsWith('x-ai/')
+  ) return 'json_object'
+
+  // 不明なプロバイダは安全側（response_format を送らない）
+  return 'none'
+}
+
+/**
+ * モデルIDと CustomModelEntry の設定から response_format オブジェクトを返す。
+ *
+ * 優先順位:
+ *   1. CustomModelEntry.responseFormat（管理画面で明示設定）
+ *   2. inferResponseFormat()（自動推定）
  */
 export function getResponseFormat(
   modelId: string,
-  schema: typeof TEST_ITEM_JSON_SCHEMA | typeof TEST_PLAN_JSON_SCHEMA
-): Record<string, unknown> {
-  // OpenAI ネイティブ（provider=openai）またはモデルIDが openai/ から始まる場合
-  const isOpenAI =
-    process.env.AI_PROVIDER === 'openai' || modelId.startsWith('openai/')
+  schema: typeof TEST_ITEM_JSON_SCHEMA | typeof TEST_PLAN_JSON_SCHEMA,
+  modelEntry?: { responseFormat?: 'json_schema' | 'json_object' | 'none' }
+): Record<string, unknown> | undefined {
+  // 管理画面で明示設定されている場合はそれを使う
+  const mode = modelEntry?.responseFormat ?? inferResponseFormat(modelId)
 
-  if (isOpenAI) {
-    return { type: 'json_schema', json_schema: schema }
-  }
-  // Anthropic claude-* は OpenRouter 経由の場合 json_object をサポート
-  // Gemini / DeepSeek も json_object をサポート
-  return { type: 'json_object' }
+  if (mode === 'json_schema') return { type: 'json_schema', json_schema: schema }
+  if (mode === 'json_object') return { type: 'json_object' }
+  // 'none': response_format を送らない（undefined を返す）
+  return undefined
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
