@@ -3,13 +3,17 @@
  *
  * RAGを使ってテスト設計プランを生成する（LLM①）
  * プランはRedisに保存され、フロントで確認・編集後に実行フェーズへ進む
+ *
+ * 追加機能:
+ *   ① Structured Outputs  — OpenAI は json_schema、他は json_object で JSON 破損を防止
+ *   ② Prompt Caching      — Anthropic は cache_control ヘッダー注入
  */
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
 import { getProject, saveAILog, getPromptTemplate, getAdminSettings, saveTestPlan, saveRefMap } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
-import { buildPlanningPrompts } from '@/lib/ai'
+import { buildPlanningPrompts, getResponseFormat, TEST_PLAN_JSON_SCHEMA } from '@/lib/ai'
 import type { TestPlan, TestPlanBatch } from '@/types'
 
 export const maxDuration = 60
@@ -39,6 +43,34 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
     }),
     model: modelOverride || process.env.OPENROUTER_MODEL || 'google/gemini-2.0-flash-001',
   }
+}
+
+// ─── ② Prompt Caching helper（batch/route.ts と同一ロジック） ────────────────
+function buildMessages(
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const isAnthropic =
+    model.startsWith('anthropic/') || model.startsWith('claude-')
+  if (isAnthropic) {
+    return [
+      {
+        role: 'system',
+        // @ts-ignore
+        content: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+      },
+      {
+        role: 'user',
+        // @ts-ignore
+        content: [{ type: 'text', text: userPrompt, cache_control: { type: 'ephemeral' } }],
+      },
+    ]
+  }
+  return [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: userPrompt },
+  ]
 }
 
 function sanitizeAndRepairJson(raw: string): string {
@@ -135,12 +167,15 @@ export async function POST(req: Request) {
     )
 
     // ── LLM呼び出し（非ストリーミング：プランは全体が必要） ────
+    // ① Structured Outputs: OpenAI は json_schema、他は json_object
+    // ② Prompt Caching: buildMessages() が Anthropic 時に cache_control を付与
+    const responseFormat = getResponseFormat(model, TEST_PLAN_JSON_SCHEMA)
+    const messages = buildMessages(model, systemPrompt, userPrompt)
+
     const res = await client.chat.completions.create({
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
+      response_format: responseFormat as OpenAI.ResponseFormatJSONObject,
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
     })

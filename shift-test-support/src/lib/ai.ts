@@ -147,6 +147,113 @@ ${refMapSummary}
   return { systemPrompt, userPrompt, refMap }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ① Structured Outputs — JSON スキーマ定義
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// OpenAI: response_format: { type: "json_schema", json_schema: TEST_ITEM_JSON_SCHEMA }
+// OpenRouter 経由 Gemini 等: response_format: { type: "json_object" }
+//   ↑ json_schema 非対応モデルでは json_object にフォールバックする。
+//
+// いずれの場合も repairJsonArray はフォールバックとして残す。
+// Structured Outputs が有効なときは実質ノーオペレーションになる。
+
+export const TEST_ITEM_JSON_SCHEMA = {
+  name: 'test_items',
+  strict: true,
+  schema: {
+    type: 'array',
+    items: {
+      type: 'object',
+      required: [
+        'categoryMajor', 'categoryMinor', 'testPerspective',
+        'testTitle', 'precondition', 'steps', 'expectedResult',
+        'priority', 'priorityReason', 'automatable', 'automatableReason',
+        'sourceRefs',
+      ],
+      additionalProperties: false,
+      properties: {
+        categoryMajor:      { type: 'string' },
+        categoryMinor:      { type: 'string' },
+        testPerspective: {
+          type: 'string',
+          enum: ['機能テスト', '正常系', '異常系', '境界値', 'セキュリティ', '操作性', '性能'],
+        },
+        testTitle:       { type: 'string' },
+        precondition:    { type: 'string' },
+        steps:           { type: 'array', items: { type: 'string' } },
+        expectedResult:  { type: 'string' },
+        priority:        { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+        priorityReason:  { type: 'string' },
+        automatable:     { type: 'string', enum: ['YES', 'NO', 'CONSIDER'] },
+        automatableReason: { type: 'string' },
+        sourceRefs: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['refId', 'reason'],
+            additionalProperties: false,
+            properties: {
+              refId:  { type: 'string' },
+              reason: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const
+
+/** プランニング用 JSON スキーマ */
+export const TEST_PLAN_JSON_SCHEMA = {
+  name: 'test_plan',
+  strict: true,
+  schema: {
+    type: 'array',
+    items: {
+      type: 'object',
+      required: ['batchId', 'category', 'perspective', 'titles', 'count'],
+      additionalProperties: false,
+      properties: {
+        batchId:     { type: 'number' },
+        category:    { type: 'string' },
+        perspective: { type: 'string' },
+        titles:      { type: 'array', items: { type: 'string' } },
+        count:       { type: 'number' },
+      },
+    },
+  },
+} as const
+
+/**
+ * モデルIDから最適な response_format を決定する。
+ *
+ * - openai/* → json_schema（Structured Outputs）
+ * - その他  → json_object（JSON モード）
+ *
+ * OpenRouter 経由の非 OpenAI モデルは json_schema の strict モードをサポートしない
+ * ケースがあるため json_object にフォールバックする。
+ */
+export function getResponseFormat(
+  modelId: string,
+  schema: typeof TEST_ITEM_JSON_SCHEMA | typeof TEST_PLAN_JSON_SCHEMA
+): Record<string, unknown> {
+  // OpenAI ネイティブ（provider=openai）またはモデルIDが openai/ から始まる場合
+  const isOpenAI =
+    process.env.AI_PROVIDER === 'openai' || modelId.startsWith('openai/')
+
+  if (isOpenAI) {
+    return { type: 'json_schema', json_schema: schema }
+  }
+  // Anthropic claude-* は OpenRouter 経由の場合 json_object をサポート
+  // Gemini / DeepSeek も json_object をサポート
+  return { type: 'json_object' }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON 修復ユーティリティ（Structured Outputs 非対応時のフォールバック）
+// ─────────────────────────────────────────────────────────────────────────────
+
 function sanitizeJson(raw: string): string {
   return raw.replace(/\"((?:[^\"\\]|\\.)*)\"/g, (match) => {
     return match

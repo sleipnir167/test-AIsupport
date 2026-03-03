@@ -288,6 +288,12 @@ export interface AdminSettings {
 
   // ─── REF抜粋文字数 ────────────────────────────────────────────
   refExcerptLength: number         // REFマップ・出典情報のexcerpt文字数（デフォルト: 250）
+
+  // ─── 高度機能フラグ（環境変数で制御、管理画面で参照） ──────────
+  /** ③ ハイブリッド検索 (USE_HYBRID_SEARCH=true で有効) */
+  useHybridSearch: boolean
+  /** ④ Reranking (COHERE_API_KEY がセットされていると自動有効) */
+  useReranking: boolean
 }
 
 // ─── カスタムモデルエントリ ─────────────────────────────────────

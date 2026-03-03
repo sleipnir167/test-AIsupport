@@ -3,12 +3,18 @@
  *
  * プランのバッチ1件を受け取り、詳細なテスト項目を生成して保存する（LLM②）
  * フロントエンドがtotalBatches回呼び出す。
+ *
+ * 追加機能:
+ *   ① Structured Outputs  — OpenAI は json_schema、他は json_object で JSON 破損を防止
+ *   ② Prompt Caching      — OpenAI は自動キャッシュ、Anthropic は cache_control ヘッダーを注入
+ *   ④ Reranking           — COHERE_API_KEY がセットされている場合 Cohere Rerank v3 を適用
  */
 import { NextResponse } from 'next/server'
 import { getProject, saveTestItems, updateJob, saveAILog, getPromptTemplate, getAdminSettings, getRefMap } from '@/lib/db'
 import type { RefMapEntry } from '@/lib/ai'
 import { searchChunks } from '@/lib/vector'
-import { buildBatchFromPlanPrompts, parseTestItems, type BuildPromptsResult } from '@/lib/ai'
+import { buildBatchFromPlanPrompts, parseTestItems, getResponseFormat, TEST_ITEM_JSON_SCHEMA, type BuildPromptsResult } from '@/lib/ai'
+import { rerankChunks } from '@/lib/rerank'
 import OpenAI from 'openai'
 import type { TestPlanBatch } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
@@ -46,6 +52,62 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
 function estimateTokens(text: string): number {
   const japanese = (text.match(/[\u3000-\u9fff\uff00-\uffef]/g) || []).length
   return Math.ceil(japanese + (text.length - japanese) / 4)
+}
+
+// ─── ② Prompt Caching ──────────────────────────────────────────────────────
+//
+// OpenAI  → prefix キャッシュは自動。追加設定不要。
+//           cached_input_tokens が usage に含まれる。
+//
+// Anthropic (OpenRouter 経由 anthropic/claude-*) →
+//   system と最初の user メッセージに cache_control を付与することで
+//   プレフィックスキャッシュが有効になり 2 回目以降 ~90% 削減。
+//   OpenRouter は x-anthropic-cache-control ヘッダーで制御する。
+//
+// その他モデル → キャッシュは自動 or 非対応。ノーオペレーション。
+//
+function buildMessages(
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const isAnthropic =
+    model.startsWith('anthropic/') || model.startsWith('claude-')
+
+  if (isAnthropic) {
+    // Anthropic の cache_control を OpenAI 互換フォーマットで渡す
+    // OpenRouter は content 配列内の cache_control を透過させる
+    return [
+      {
+        role: 'system',
+        // @ts-ignore — cache_control は OpenAI SDK 型に含まれないが OpenRouter が解釈する
+        content: [
+          {
+            type: 'text',
+            text: systemPrompt,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        // @ts-ignore
+        content: [
+          {
+            type: 'text',
+            text: userPrompt,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ]
+  }
+
+  // OpenAI / その他: 通常の文字列形式
+  return [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: userPrompt },
+  ]
 }
 
 export async function POST(req: Request) {
@@ -118,12 +180,19 @@ export async function POST(req: Request) {
     log(jobId, `RAG: doc=${docChunks.length} site=${siteChunks.length} src=${sourceChunks.length} savedRefMap=${savedRefMap?.length ?? 'none'}`)
 
     const seenIds = new Set<string>()
-    const allChunks = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
+    const allChunksRaw = [...docChunks, ...siteChunks, ...sourceChunks].filter(c => {
       const key = `${c.docId}-${c.chunkIndex}`
       if (seenIds.has(key)) return false
       seenIds.add(key)
       return true
     })
+
+    // ─── ④ Reranking ──────────────────────────────────────────────────────
+    // COHERE_API_KEY がセットされている場合、Cohere Rerank v3 でチャンクを再スコアリング。
+    // 未セットの場合は rerankChunks がパススルーするためコードの変更は不要。
+    const rerankTopN = Number(process.env.RERANK_TOP_N ?? '40')
+    const allChunks = await rerankChunks(pageQuery, allChunksRaw, { topN: rerankTopN })
+    log(jobId, `After rerank: ${allChunksRaw.length} → ${allChunks.length} chunks`)
 
     let result: BuildPromptsResult
     if (planBatch) {
@@ -192,12 +261,20 @@ export async function POST(req: Request) {
       abortController.abort()
     }, Math.max(remaining, 1000))
 
+    // ─── ① Structured Outputs ─────────────────────────────────────────────
+    // OpenAI: json_schema（スキーマ準拠を保証、repairJsonArray 不要に）
+    // その他: json_object（JSON モード、repairJsonArray はフォールバックとして残す）
+    const responseFormat = getResponseFormat(model, TEST_ITEM_JSON_SCHEMA)
+
+    // ─── ② Prompt Caching ─────────────────────────────────────────────────
+    // buildMessages() が Anthropic モデルの場合 cache_control を付与する。
+    // OpenAI は prefix キャッシュ自動適用のため追加設定不要。
+    const messages = buildMessages(model, systemPrompt, userPrompt)
+
     const aiStream = await client.chat.completions.create({
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
+      messages,
+      response_format: responseFormat as OpenAI.ResponseFormatJSONObject,
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
       stream: true,

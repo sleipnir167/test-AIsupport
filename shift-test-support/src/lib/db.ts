@@ -290,6 +290,9 @@ const DEFAULT_SETTINGS: AdminSettings = {
   // バッチサイズ初期値
   defaultBatchSize: 50,
   refExcerptLength: 250,
+  // 高度機能フラグ（実際の有効/無効は環境変数で決まる。ここでは参照用デフォルト）
+  useHybridSearch: false,
+  useReranking: false,
 }
 export async function getAdminSettings(): Promise<AdminSettings> {
   const saved = await redis.get<AdminSettings>(LOG_KEY.settings)

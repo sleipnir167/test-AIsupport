@@ -1,3 +1,24 @@
+/**
+ * lib/vector.ts
+ *
+ * Upstash Vector を使った RAG チャンク管理。
+ *
+ * ③ ハイブリッド検索 (Dense + Sparse / BM25)
+ *   環境変数 USE_HYBRID_SEARCH=true をセットすると、
+ *   Dense（意味検索）と Sparse（BM25 キーワード検索）を RRF で融合した
+ *   ハイブリッド検索を使用します。
+ *   固有名詞・数値・製品名などキーワード一致が重要なクエリで特に効果的です。
+ *
+ *   ⚠️ Upstash Vector インデックスがハイブリッドモード（HYBRID タイプ）で
+ *      作成されている必要があります。Dense-only インデックスでは
+ *      sparseVector パラメータは無視されます。
+ *
+ * 環境変数:
+ *   UPSTASH_VECTOR_REST_URL   — Upstash Vector REST URL
+ *   UPSTASH_VECTOR_REST_TOKEN — Upstash Vector REST Token
+ *   USE_HYBRID_SEARCH         — "true" でハイブリッド検索を有効化（デフォルト: false）
+ */
+
 import { Index } from '@upstash/vector'
 
 export const vectorIndex = new Index({
@@ -56,17 +77,65 @@ export async function upsertChunks(
   return total
 }
 
-export async function searchChunks(
+// ─── ③ ハイブリッド検索 ────────────────────────────────────────
+
+/**
+ * Dense + Sparse (BM25) のハイブリッド検索を実行する。
+ * Upstash Vector の fusionAlgorithm: "RRF" を使って両スコアを統合する。
+ *
+ * ⚠️ インデックスが HYBRID タイプである必要がある。
+ *    Dense-only インデックスの場合は通常の Dense 検索にフォールバックする。
+ */
+async function hybridSearchChunks(
   query: string,
   projectId: string,
-  topK = 20,
+  topK: number,
   categoryFilter?: string
 ): Promise<VectorMetadata[]> {
   const filter = categoryFilter
     ? `projectId = '${projectId}' AND category = '${categoryFilter}'`
     : `projectId = '${projectId}'`
 
-  // source_code は多様なコードが含まれるため閾値を低めに設定
+  const scoreThreshold = categoryFilter === 'source_code' ? 0.2 : 0.4
+
+  try {
+    // Upstash Vector ハイブリッド検索:
+    //   data       → Dense embedding を自動生成
+    //   sparseData → Sparse (BM25) ベクトルを自動生成（HYBRID インデックス必須）
+    //   fusionAlgorithm: "RRF" → Reciprocal Rank Fusion で統合
+    const results = await vectorIndex.query<VectorMetadata>({
+      data: query,
+      sparseData: query,   // HYBRID インデックスで BM25 ベクトルを自動生成
+      fusionAlgorithm: 'RRF',
+      topK,
+      includeMetadata: true,
+      filter,
+    } as Parameters<typeof vectorIndex.query>[0])
+
+    return results
+      .filter(r => r.score > scoreThreshold)
+      .map(r => r.metadata!)
+      .filter(Boolean)
+  } catch (e) {
+    // ハイブリッド非対応インデックスの場合はフォールバック
+    console.warn('[vector] hybrid search failed, falling back to dense:', (e as Error).message)
+    return denseSearchChunks(query, projectId, topK, categoryFilter)
+  }
+}
+
+/**
+ * 従来の Dense（コサイン類似度）検索。
+ */
+async function denseSearchChunks(
+  query: string,
+  projectId: string,
+  topK: number,
+  categoryFilter?: string
+): Promise<VectorMetadata[]> {
+  const filter = categoryFilter
+    ? `projectId = '${projectId}' AND category = '${categoryFilter}'`
+    : `projectId = '${projectId}'`
+
   const scoreThreshold = categoryFilter === 'source_code' ? 0.2 : 0.4
 
   const results = await vectorIndex.query<VectorMetadata>({
@@ -75,10 +144,28 @@ export async function searchChunks(
     includeMetadata: true,
     filter,
   })
+
   return results
     .filter(r => r.score > scoreThreshold)
     .map(r => r.metadata!)
     .filter(Boolean)
+}
+
+/**
+ * チャンク検索のエントリーポイント。
+ * USE_HYBRID_SEARCH=true の場合はハイブリッド検索、それ以外は Dense 検索を使用。
+ */
+export async function searchChunks(
+  query: string,
+  projectId: string,
+  topK = 20,
+  categoryFilter?: string
+): Promise<VectorMetadata[]> {
+  const useHybrid = process.env.USE_HYBRID_SEARCH === 'true'
+  if (useHybrid) {
+    return hybridSearchChunks(query, projectId, topK, categoryFilter)
+  }
+  return denseSearchChunks(query, projectId, topK, categoryFilter)
 }
 
 export async function deleteDocumentChunks(docId: string, chunkCount: number): Promise<void> {
