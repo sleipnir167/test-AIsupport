@@ -54,17 +54,18 @@ function buildMessages(
   const isAnthropic =
     model.startsWith('anthropic/') || model.startsWith('claude-')
   if (isAnthropic) {
+    type WithCacheControl = OpenAI.Chat.ChatCompletionContentPartText & {
+      cache_control: { type: string }
+    }
+    const sysContent: WithCacheControl[] = [
+      { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+    ]
+    const userContent: WithCacheControl[] = [
+      { type: 'text', text: userPrompt, cache_control: { type: 'ephemeral' } },
+    ]
     return [
-      {
-        role: 'system',
-        // @ts-ignore
-        content: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      },
-      {
-        role: 'user',
-        // @ts-ignore
-        content: [{ type: 'text', text: userPrompt, cache_control: { type: 'ephemeral' } }],
-      },
+      { role: 'system', content: sysContent as unknown as OpenAI.Chat.ChatCompletionContentPartText[] },
+      { role: 'user',   content: userContent as unknown as OpenAI.Chat.ChatCompletionContentPartText[] },
     ]
   }
   return [

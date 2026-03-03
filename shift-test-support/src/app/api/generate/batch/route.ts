@@ -75,31 +75,21 @@ function buildMessages(
     model.startsWith('anthropic/') || model.startsWith('claude-')
 
   if (isAnthropic) {
-    // Anthropic の cache_control を OpenAI 互換フォーマットで渡す
-    // OpenRouter は content 配列内の cache_control を透過させる
+    // Anthropic の cache_control を OpenAI 互換フォーマットで渡す。
+    // OpenRouter は content 配列内の cache_control を透過させる。
+    // cache_control は OpenAI SDK の型に存在しないため unknown 経由でキャストする。
+    type WithCacheControl = OpenAI.Chat.ChatCompletionContentPartText & {
+      cache_control: { type: string }
+    }
+    const sysContent: WithCacheControl[] = [
+      { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+    ]
+    const userContent: WithCacheControl[] = [
+      { type: 'text', text: userPrompt, cache_control: { type: 'ephemeral' } },
+    ]
     return [
-      {
-        role: 'system',
-        // @ts-ignore — cache_control は OpenAI SDK 型に含まれないが OpenRouter が解釈する
-        content: [
-          {
-            type: 'text',
-            text: systemPrompt,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
-      },
-      {
-        role: 'user',
-        // @ts-ignore
-        content: [
-          {
-            type: 'text',
-            text: userPrompt,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
-      },
+      { role: 'system', content: sysContent as unknown as OpenAI.Chat.ChatCompletionContentPartText[] },
+      { role: 'user',   content: userContent as unknown as OpenAI.Chat.ChatCompletionContentPartText[] },
     ]
   }
 
