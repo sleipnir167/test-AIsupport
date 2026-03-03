@@ -75,23 +75,47 @@ function buildMessages(
 }
 
 function sanitizeAndRepairJson(raw: string): string {
+  // ① コードブロック除去・トリム
   let s = raw.replace(/```(?:json)?/gi, '').trim()
-  const start = s.indexOf('[')
-  if (start === -1) throw new Error('JSON配列の開始が見つかりません')
-  s = s.slice(start)
-  // 文字列内の制御文字を除去
+
+  // ② 文字列内制御文字の除去（先に行う）
   s = s.replace(/"((?:[^"\\]|\\.)*)"/g, (match) =>
     match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
   )
-  try { JSON.parse(s); return s } catch {}
-  // 末尾が切れている場合の修復
-  for (let i = s.length - 1; i >= 0; i--) {
-    if (s[i] === '}') {
-      const candidate = s.slice(0, i + 1) + ']'
-      try { JSON.parse(candidate); return candidate } catch {}
+
+  // ③ 空・null レスポンス対応
+  if (!s || s === 'null' || s === 'undefined') return '[]'
+
+  // ④ 配列として解析を試みる
+  const arrStart = s.indexOf('[')
+  if (arrStart !== -1) {
+    const arrStr = s.slice(arrStart)
+    try { JSON.parse(arrStr); return arrStr } catch {}
+    // 末尾切れの修復
+    for (let i = arrStr.length - 1; i >= 0; i--) {
+      if (arrStr[i] === '}') {
+        const candidate = arrStr.slice(0, i + 1) + ']'
+        try { JSON.parse(candidate); return candidate } catch {}
+      }
     }
   }
-  throw new Error('JSONの修復に失敗しました')
+
+  // ⑤ オブジェクト単体（{}）が返ってきた場合は配列に包む
+  const objStart = s.indexOf('{')
+  if (objStart !== -1) {
+    const objStr = s.slice(objStart)
+    // 末尾まで閉じているか探す
+    for (let i = objStr.length - 1; i >= 0; i--) {
+      if (objStr[i] === '}') {
+        const candidate = '[' + objStr.slice(0, i + 1) + ']'
+        try { JSON.parse(candidate); return candidate } catch {}
+      }
+    }
+  }
+
+  // ⑥ それでも失敗したら空配列を返す（throw せずフォールバック）
+  console.warn('[sanitizeAndRepairJson] all repair attempts failed, returning []')
+  return '[]'
 }
 
 export async function POST(req: Request) {

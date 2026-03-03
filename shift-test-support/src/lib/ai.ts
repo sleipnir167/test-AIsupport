@@ -301,19 +301,44 @@ function sanitizeJson(raw: string): string {
 }
 
 function repairJsonArray(raw: string): string {
+  // ① コードブロック除去・トリム
   let s = raw.replace(/```(?:json)?/gi, '').trim()
-  const start = s.indexOf('[')
-  if (start === -1) throw new Error('JSON配列の開始が見つかりません')
-  s = s.slice(start)
+
+  // ② 文字列内制御文字の除去
   s = sanitizeJson(s)
-  try { JSON.parse(s); return s } catch {}
-  for (let i = s.length - 1; i >= 0; i--) {
-    if (s[i] === '}') {
-      const candidate = s.slice(0, i + 1) + ']'
-      try { JSON.parse(candidate); return candidate } catch {}
+
+  // ③ 空・null レスポンス対応
+  if (!s || s === 'null' || s === 'undefined') return '[]'
+
+  // ④ 配列として解析を試みる
+  const arrStart = s.indexOf('[')
+  if (arrStart !== -1) {
+    const arrStr = s.slice(arrStart)
+    try { JSON.parse(arrStr); return arrStr } catch {}
+    // 末尾切れの修復
+    for (let i = arrStr.length - 1; i >= 0; i--) {
+      if (arrStr[i] === '}') {
+        const candidate = arrStr.slice(0, i + 1) + ']'
+        try { JSON.parse(candidate); return candidate } catch {}
+      }
     }
   }
-  throw new Error('JSONの修復に失敗しました')
+
+  // ⑤ オブジェクト単体が返ってきた場合は配列に包む
+  const objStart = s.indexOf('{')
+  if (objStart !== -1) {
+    const objStr = s.slice(objStart)
+    for (let i = objStr.length - 1; i >= 0; i--) {
+      if (objStr[i] === '}') {
+        const candidate = '[' + objStr.slice(0, i + 1) + ']'
+        try { JSON.parse(candidate); return candidate } catch {}
+      }
+    }
+  }
+
+  // ⑥ フォールバック: 空配列（throw せずに返す）
+  console.warn('[repairJsonArray] all repair attempts failed, returning []')
+  return '[]'
 }
 
 export function parseTestItems(
