@@ -281,8 +281,8 @@ const DEFAULT_SETTINGS: AdminSettings = {
     { id: 'deepseek/deepseek-v3.2',            label: 'DeepSeek V3.2',         inputCost: '$0.20', outputCost: '$0.35',  feature: '最安クラス。出力量が多いならこれ一択',     speed: '高速' as const, responseFormat: 'json_object' as const },
     { id: 'google/gemini-2.5-flash',           label: 'Gemini 2.5 Flash',       inputCost: '$0.15', outputCost: '$0.60',  feature: '最新Gemini。高精度かつ爆速',              speed: '爆速' as const, responseFormat: 'json_object' as const },
     { id: 'google/gemini-3-flash-preview',     label: 'Gemini 3 Flash Preview', inputCost: '$0.10', outputCost: '$0.40',  feature: 'Gemini最新プレビュー。爆速で大量生成',    speed: '爆速' as const, responseFormat: 'json_object' as const },
-    { id: 'openai/gpt-5-nano',                 label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',         speed: '爆速' as const, responseFormat: 'json_schema' as const },
-    { id: 'openai/gpt-5.2',                    label: 'GPT-5.2',                inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' as const, responseFormat: 'json_schema' as const },
+    { id: 'openai/gpt-5-nano',                 label: 'GPT-5 Nano',             inputCost: '$0.05', outputCost: '$0.20',  feature: '最も安価なGPT。軽量タスクに最適',         speed: '爆速' as const, responseFormat: 'json_object' as const },
+    { id: 'openai/gpt-5.2',                    label: 'GPT-5.2',                inputCost: '$1.75', outputCost: '$14.00', feature: '非常に高精度。複雑なロジックの網羅に強い', speed: '標準' as const, responseFormat: 'json_object' as const },
     { id: 'anthropic/claude-sonnet-4.6',       label: 'Claude Sonnet 4.6',      inputCost: '$3.00', outputCost: '$15.00', feature: 'Anthropic最新。論理的な分析に最強',       speed: '標準' as const, responseFormat: 'json_object' as const },
     { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B',          inputCost: '$0.12', outputCost: '$0.30',  feature: 'Meta製OSS。コスパ良好',                  speed: '高速' as const, responseFormat: 'json_object' as const },
     { id: 'deepseek/deepseek-r1-0528:free',    label: 'DeepSeek R1 (free)',      inputCost: '無料',  outputCost: '無料',   feature: 'OpenRouterの無料枠。お試しに最適',        speed: '高速' as const, isFree: true, responseFormat: 'json_object' as const },
@@ -294,9 +294,42 @@ const DEFAULT_SETTINGS: AdminSettings = {
   useHybridSearch: false,
   useReranking: false,
 }
+// responseFormat が未設定のモデルに対してモデルIDから自動補完するマイグレーション
+// Redisに古いデータが残っていても正しく動作させるため
+function migrateSettings(settings: AdminSettings): AdminSettings {
+  if (!settings.customModelList?.length) return settings
+
+  // inferResponseFormat と同じロジックをここでもインライン定義
+  // （lib/ai.ts に依存させないためdb.ts内で完結させる）
+  function inferFmt(id: string): 'json_schema' | 'json_object' | 'none' {
+    const lower = id.toLowerCase()
+    // AI_PROVIDER=openai（ネイティブ）のみ json_schema
+    if (process.env.AI_PROVIDER === 'openai') return 'json_schema'
+    if (
+      lower.startsWith('openai/') ||
+      lower.startsWith('google/') ||
+      lower.startsWith('anthropic/') ||
+      lower.startsWith('deepseek/') ||
+      lower.startsWith('meta-llama/') ||
+      lower.startsWith('mistralai/') ||
+      lower.startsWith('x-ai/')
+    ) return 'json_object'
+    return 'none'
+  }
+
+  const migrated = settings.customModelList.map(m =>
+    m.responseFormat ? m : { ...m, responseFormat: inferFmt(m.id) }
+  )
+
+  // 変更があった場合のみ新オブジェクトを返す
+  const changed = migrated.some((m, i) => m !== settings.customModelList[i])
+  return changed ? { ...settings, customModelList: migrated } : settings
+}
+
 export async function getAdminSettings(): Promise<AdminSettings> {
   const saved = await redis.get<AdminSettings>(LOG_KEY.settings)
-  return saved ?? DEFAULT_SETTINGS
+  const base = saved ?? DEFAULT_SETTINGS
+  return migrateSettings(base)
 }
 
 export async function saveAdminSettings(settings: Partial<AdminSettings>): Promise<void> {

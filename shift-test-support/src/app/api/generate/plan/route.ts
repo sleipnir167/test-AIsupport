@@ -180,7 +180,7 @@ export async function POST(req: Request) {
       model,
       messages,
       // response_format が undefined（mode=none）の場合はパラメータ自体を省略
-      ...(responseFormat ? { response_format: responseFormat as unknown as OpenAI.ResponseFormatJSONObject } : {}),
+      ...(responseFormat ? { response_format: responseFormat as OpenAI.ResponseFormatJSONObject } : {}),
       temperature: adminSettings.defaultTemperature,
       max_tokens: adminSettings.defaultMaxTokens,
     })

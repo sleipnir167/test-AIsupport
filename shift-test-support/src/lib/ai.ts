@@ -228,30 +228,31 @@ export const TEST_PLAN_JSON_SCHEMA = {
 /**
  * モデルIDからJSON出力モードを自動推定する。
  *
- * OpenRouter のモデルIDプレフィックスで判定：
- *   openai/*       → json_schema（Structured Outputs）
- *   google/*       → json_object（Gemini はJSON modeをサポート）
- *   anthropic/*    → json_object（OpenRouter 経由JSON mode対応）
- *   deepseek/*     → json_object
- *   meta-llama/*   → json_object
- *   mistralai/*    → json_object
- *   その他 / 不明  → none（安全側に倒す）
+ * 重要: OpenRouter 経由の openai/* モデルは Structured Outputs（json_schema）を
+ * サポートしないケースがあるため json_object に倒す。
+ * json_schema を使いたい場合は管理画面で手動設定すること。
  *
- * AI_PROVIDER=openai（ネイティブ）の場合は常に json_schema。
+ *   AI_PROVIDER=openai（ネイティブ直接呼び出し）→ json_schema
+ *   openai/* (OpenRouter経由)                   → json_object
+ *   google/*                                    → json_object
+ *   anthropic/*                                 → json_object
+ *   deepseek/*                                  → json_object
+ *   meta-llama/*                                → json_object
+ *   mistralai/*                                 → json_object
+ *   その他 / 不明                               → none（安全側）
  */
 export function inferResponseFormat(
   modelId: string
 ): 'json_schema' | 'json_object' | 'none' {
-  // ネイティブ OpenAI
+  // ネイティブ OpenAI（直接呼び出し）のみ json_schema
   if (process.env.AI_PROVIDER === 'openai') return 'json_schema'
 
   const id = modelId.toLowerCase()
 
-  // OpenRouter 経由の OpenAI モデル
-  if (id.startsWith('openai/')) return 'json_schema'
-
   // JSON object mode をサポートするプロバイダ
+  // ※ openai/ を含む — OpenRouter経由の OpenAI モデルも json_object に統一
   if (
+    id.startsWith('openai/') ||
     id.startsWith('google/') ||
     id.startsWith('anthropic/') ||
     id.startsWith('deepseek/') ||
