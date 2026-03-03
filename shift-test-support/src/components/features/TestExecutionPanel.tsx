@@ -323,7 +323,7 @@ export default function TestExecutionPanel({ projectId, testItems }: Props) {
                       next.add(item.id);
                     }
                     setSelectedIds(next)
-                  }}
+                  }} className="rounded" />
                 <span className="font-mono text-slate-500">{item.testId}</span>
                 <span className="flex-1 truncate">{item.testTitle}</span>
                 <span className={clsx('text-xs px-1 rounded',
