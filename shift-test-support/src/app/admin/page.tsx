@@ -31,8 +31,6 @@ const DEFAULT_SETTINGS: AdminSettings = {
   customModelList:       [],
   defaultBatchSize:      50,
   refExcerptLength:      250,
-  useHybridSearch:       false,
-  useReranking:          false,
 }
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
@@ -170,6 +168,15 @@ function LabelEditor({
 
 // ─── ModelListEditor ───────────────────────────────────────────
 const SPEED_OPTIONS: CustomModelEntry['speed'][] = ['爆速', '高速', '標準']
+const RESPONSE_FORMAT_OPTIONS: Array<{
+  value: NonNullable<CustomModelEntry['responseFormat']>
+  label: string
+  desc: string
+}> = [
+  { value: 'json_schema', label: 'json_schema（Structured Outputs）', desc: 'OpenAI 系。スキーマ完全準拠保証' },
+  { value: 'json_object',  label: 'json_object（JSON モード）',        desc: 'Gemini / DeepSeek / Claude 等' },
+  { value: 'none',         label: 'none（送らない）',                  desc: 'エラーが出るモデル向け。プロンプトのみで制御' },
+]
 
 function ModelListEditor({
   models, onChange, onSave, saving
@@ -214,6 +221,16 @@ function ModelListEditor({
     const arr = [...models]
     ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
     onChange(arr)
+  }
+
+  /** モデルIDからレスポンスフォーマットを自動推定して表示するラベル */
+  function autoInferLabel(id: string): string {
+    const lower = id.toLowerCase()
+    if (lower.startsWith('openai/')) return 'json_schema（自動）'
+    if (lower.startsWith('google/') || lower.startsWith('anthropic/') ||
+        lower.startsWith('deepseek/') || lower.startsWith('meta-llama/') ||
+        lower.startsWith('mistralai/') || lower.startsWith('x-ai/')) return 'json_object（自動）'
+    return 'none（自動）'
   }
 
   const EditRow = () => (
@@ -263,6 +280,41 @@ function ModelListEditor({
               className="accent-shift-500 w-4 h-4" />
             <span className="text-xs text-gray-300">無料モデル（緑色強調）</span>
           </label>
+        </div>
+
+        {/* ─── JSON出力モード設定 ─── */}
+        <div className="col-span-2">
+          <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1">
+            JSON 出力モード
+            <span className="text-gray-600 font-normal">（未設定 = モデルIDから自動推定）</span>
+          </label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={editBuf.responseFormat ?? ''}
+              onChange={e => setEditBuf(b => ({
+                ...b,
+                responseFormat: e.target.value === ''
+                  ? undefined
+                  : e.target.value as CustomModelEntry['responseFormat']
+              }))}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 outline-none focus:border-shift-600 w-72"
+            >
+              <option value="">自動推定（{autoInferLabel(editBuf.id)}）</option>
+              {RESPONSE_FORMAT_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            {editBuf.responseFormat && (
+              <span className="text-xs text-amber-400 bg-amber-900/30 px-2 py-1 rounded-lg border border-amber-700/40">
+                ⚠️ 手動設定中
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-600 mt-1">
+            {editBuf.responseFormat
+              ? RESPONSE_FORMAT_OPTIONS.find(o => o.value === editBuf.responseFormat)?.desc
+              : 'モデルIDのプレフィックス（openai/ → json_schema、google/ → json_object 等）から自動判定します。'}
+          </p>
         </div>
       </div>
       <div className="flex gap-2">
@@ -329,6 +381,15 @@ function ModelListEditor({
                         m.speed === '高速' ? 'bg-blue-900/50 text-blue-300' : 'bg-gray-700 text-gray-300'
                       )}>{m.speed === '爆速' ? '⚡ ' : ''}{m.speed}</span>
                       {m.isFree && <span className="text-xs bg-emerald-900/50 text-emerald-300 px-2 py-0.5 rounded-full font-medium">FREE</span>}
+                      {m.responseFormat && (
+                        <span className={clsx('text-xs px-2 py-0.5 rounded-full font-mono',
+                          m.responseFormat === 'json_schema' ? 'bg-purple-900/50 text-purple-300' :
+                          m.responseFormat === 'json_object' ? 'bg-blue-900/40 text-blue-300' :
+                          'bg-gray-700/50 text-gray-400'
+                        )}>
+                          {m.responseFormat}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 font-mono mt-0.5">{m.id}</div>
                     {m.feature && <div className="text-xs text-gray-400 mt-0.5 truncate">{m.feature}</div>}
