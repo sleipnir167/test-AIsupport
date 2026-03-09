@@ -332,10 +332,13 @@ export async function POST(req: Request) {
     const messages = buildMessages(model, systemPrompt, userPrompt)
 
     const res = await client.chat.completions.create({
-      model, messages, max_tokens: 6000,
-      temperature: 0,
+      model,
+      messages,
+      max_tokens: 4000,
+      temperature: 0.3,
       response_format: { type: 'json_object' },
-    } as Parameters<typeof client.chat.completions.create>[0])
+      stream: false, // 明示的にストリームをオフにする（推奨）
+    }) as OpenAI.Chat.ChatCompletion // ここで型を確定させる
 
     const raw = res.choices?.[0]?.message?.content ?? '{}'
     const analysisResult = JSON.parse(sanitizeJson(raw))
