@@ -242,7 +242,8 @@ export async function POST(req: Request) {
       max_tokens: 4000,
       temperature: 0.3,
       response_format: { type: 'json_object' },
-    } as Parameters<typeof client.chat.completions.create>[0])
+      stream: false, // 明示的にストリームをオフにする（推奨）
+    }) as OpenAI.Chat.ChatCompletion // ここで型を確定させる
 
     const raw = res.choices?.[0]?.message?.content ?? '{}'
     const cleaned = sanitizeJson(raw)
