@@ -208,7 +208,7 @@ export interface AILogEntry {
   projectName: string
   type: 'generation' | 'review' | 'compare'
   /** generation の内訳: planning=プランニング、batch=バッチ実行 */
-  logStage?: 'planning' | 'batch'
+  logStage?: 'planning' | 'batch' | 'system_analysis'
   modelId: string
   modelLabel: string
   batchNum?: number
