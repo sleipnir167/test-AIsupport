@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import type { TestItem, DesignMeta, ReviewResult, ExcelCompareResult, CoverageScore, PerspectiveHeatmapCell } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
-import { saveAILog, getPromptTemplate, getAdminSettings, getProject } from '@/lib/db'
+import { saveAILog, getPromptTemplate, getAdminSettings, getProject, getReviewResult, saveReviewResult } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
 
 export const maxDuration = 60
@@ -341,6 +341,16 @@ function parseExcelItems(rows: string[][]): TestItem[] {
   }))
 }
 
+
+// ─── GET: 保存済みレビュー結果を取得 ────────────────────────────
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const projectId = searchParams.get('projectId')
+  if (!projectId) return NextResponse.json({ error: 'projectIdは必須です' }, { status: 400 })
+  const record = await getReviewResult(projectId)
+  return NextResponse.json(record ?? null)
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData()
@@ -353,6 +363,11 @@ export async function POST(req: Request) {
     if (action === 'review_generated') {
       const items: TestItem[] = JSON.parse(formData.get('items') as string)
       const result = await runSingleReview(items, designMeta, reviewModelId, reviewModelLabel, projectId)
+      // Redisに保存（リロード復元用）
+      if (projectId) {
+        const now = new Date().toISOString()
+        await saveReviewResult({ projectId, result, model: reviewModelId, createdAt: now, updatedAt: now }).catch(() => {})
+      }
       return NextResponse.json(result)
     }
     if (action === 'review_excel') {
@@ -366,6 +381,11 @@ export async function POST(req: Request) {
       const items = parseExcelItems(rows)
       const result = await runSingleReview(items, designMeta, reviewModelId, reviewModelLabel, projectId)
       result.targetSource = 'excel'
+      // Redisに保存（リロード復元用）
+      if (projectId) {
+        const now = new Date().toISOString()
+        await saveReviewResult({ projectId, result, model: reviewModelId, createdAt: now, updatedAt: now }).catch(() => {})
+      }
       return NextResponse.json(result)
     }
     if (action === 'compare_excel') {

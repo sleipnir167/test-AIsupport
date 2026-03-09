@@ -345,11 +345,19 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
         setApproaches(new Set(meta.designApproaches ?? []))
       }
     } catch {}
-    // 前回レビュー結果
-    try {
-      const savedReview = localStorage.getItem(`reviewResult_${params.id}`)
-      if (savedReview) setReviewResult(JSON.parse(savedReview))
-    } catch {}
+    // 前回レビュー結果をRedisから読み込み（サーバー側永続化）
+    fetch(`/api/review?projectId=${params.id}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data?.result) setReviewResult(data.result)
+      })
+      .catch(() => {
+        // フォールバック: localStorage（後方互換）
+        try {
+          const savedReview = localStorage.getItem(`reviewResult_${params.id}`)
+          if (savedReview) setReviewResult(JSON.parse(savedReview))
+        } catch {}
+      })
     // テスト項目取得
     fetch(`/api/test-items?projectId=${params.id}`)
       .then(r => r.json())
@@ -398,6 +406,7 @@ export default function ReviewPage({ params }: { params: { id: string } }) {
       if (!res.ok) throw new Error((await res.json()).error)
       const result = await res.json()
       setReviewResult(result)
+      // サーバー側(Redis)で保存済み。localStorageにも互換性のために保存
       try { localStorage.setItem(`reviewResult_${params.id}`, JSON.stringify(result)) } catch {}
     } catch (e) { setError(e instanceof Error ? e.message : String(e))
     } finally { setLoading(false) }

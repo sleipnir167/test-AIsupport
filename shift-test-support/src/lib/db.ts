@@ -8,16 +8,20 @@ export const redis = new Redis({
 })
 
 const KEY = {
-  projectList:   (userId: string)    => `user:${userId}:projects`,
-  project:       (id: string)        => `project:${id}`,
-  docList:       (projectId: string) => `project:${projectId}:docs`,
-  doc:           (id: string)        => `doc:${id}`,
-  testList:      (projectId: string) => `project:${projectId}:testitems`,
-  testItem:      (id: string)        => `testitem:${id}`,
-  siteAnalysis:  (projectId: string) => `project:${projectId}:siteanalysis`,
-  testPlan:      (projectId: string) => `project:${projectId}:testplan`,
+  projectList:    (userId: string)    => `user:${userId}:projects`,
+  project:        (id: string)        => `project:${id}`,
+  docList:        (projectId: string) => `project:${projectId}:docs`,
+  doc:            (id: string)        => `doc:${id}`,
+  testList:       (projectId: string) => `project:${projectId}:testitems`,
+  testItem:       (id: string)        => `testitem:${id}`,
+  siteAnalysis:   (projectId: string) => `project:${projectId}:siteanalysis`,
+  testPlan:       (projectId: string) => `project:${projectId}:testplan`,
   /** プランニング時のREFマップ（チャンク→REF番号の対応表）を保存 */
-  refMap:        (projectId: string) => `project:${projectId}:refmap`,
+  refMap:         (projectId: string) => `project:${projectId}:refmap`,
+  /** システム分析結果（テスト工程別に保存） */
+  systemAnalysis: (projectId: string, testPhase: string) => `project:${projectId}:systemanalysis:${encodeURIComponent(testPhase)}`,
+  /** AIレビュー結果（最新1件） */
+  reviewResult:   (projectId: string) => `project:${projectId}:reviewresult`,
 }
 
 // ─── プロジェクト ────────────────────────────────────────────
@@ -367,4 +371,60 @@ export async function saveRefMap(projectId: string, refMap: RefMapEntry[]): Prom
  */
 export async function getRefMap(projectId: string): Promise<RefMapEntry[] | null> {
   return redis.get<RefMapEntry[]>(KEY.refMap(projectId))
+}
+
+// ─── システム分析結果 ─────────────────────────────────────────
+const ANALYSIS_TTL = 60 * 60 * 24 * 30 // 30日
+
+export interface SystemAnalysisRecord {
+  projectId: string
+  testPhase: string
+  analysis: unknown        // AnalysisResult 型（フロント側で型付け）
+  model: string
+  ragBreakdown: { doc: number; site: number; src: number }
+  createdAt: string
+  updatedAt: string
+}
+
+export async function getSystemAnalysis(projectId: string, testPhase: string): Promise<SystemAnalysisRecord | null> {
+  return redis.get<SystemAnalysisRecord>(KEY.systemAnalysis(projectId, testPhase))
+}
+
+export async function saveSystemAnalysis(record: SystemAnalysisRecord): Promise<void> {
+  await redis.set(
+    KEY.systemAnalysis(record.projectId, record.testPhase),
+    { ...record, updatedAt: new Date().toISOString() },
+    { ex: ANALYSIS_TTL }
+  )
+}
+
+export async function deleteSystemAnalysis(projectId: string, testPhase: string): Promise<void> {
+  await redis.del(KEY.systemAnalysis(projectId, testPhase))
+}
+
+// ─── AIレビュー結果 ───────────────────────────────────────────
+const REVIEW_TTL = 60 * 60 * 24 * 30 // 30日
+
+export interface ReviewResultRecord {
+  projectId: string
+  result: unknown          // ReviewResult 型（フロント側で型付け）
+  model: string
+  createdAt: string
+  updatedAt: string
+}
+
+export async function getReviewResult(projectId: string): Promise<ReviewResultRecord | null> {
+  return redis.get<ReviewResultRecord>(KEY.reviewResult(projectId))
+}
+
+export async function saveReviewResult(record: ReviewResultRecord): Promise<void> {
+  await redis.set(
+    KEY.reviewResult(record.projectId),
+    { ...record, updatedAt: new Date().toISOString() },
+    { ex: REVIEW_TTL }
+  )
+}
+
+export async function deleteReviewResult(projectId: string): Promise<void> {
+  await redis.del(KEY.reviewResult(projectId))
 }
