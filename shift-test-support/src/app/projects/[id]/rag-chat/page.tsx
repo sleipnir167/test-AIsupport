@@ -60,7 +60,7 @@ const SUGGESTED_QUESTIONS = [
 ]
 
 // ─── マークダウン簡易レンダラー ──────────────────────────────────
-function renderMarkdown(text: string, referencedRefs: Set<string>): React.ReactNode[] {
+function renderMarkdown(text: string, referencedRefs: Set<string>, sources: Source[] = []): React.ReactNode[] {
   const lines = text.split('\n')
   const nodes: React.ReactNode[] = []
   let i = 0
@@ -71,13 +71,16 @@ function renderMarkdown(text: string, referencedRefs: Set<string>): React.ReactN
       const m = part.match(/^\[REF-(\d+)\]$/)
       if (m) {
         const refId = `REF-${m[1]}`
+        const src = sources.find(s => s.refId === refId)
+        // sources がある場合は RefBadge（ホバーTIP付き）、ない場合は静的バッジ
+        if (src) {
+          return <InlineRefBadge key={pi} refId={refId} source={src} isReferenced={referencedRefs.has(refId)} />
+        }
         const isReferenced = referencedRefs.has(refId)
         return (
           <span key={pi}
-            className={`inline-flex items-center text-xs font-bold px-1.5 py-0.5 rounded cursor-pointer mx-0.5 transition-colors ${
-              isReferenced
-                ? 'bg-shift-100 text-shift-800 border border-shift-300 hover:bg-shift-200'
-                : 'bg-gray-100 text-gray-500 border border-gray-200'
+            className={`inline-flex items-center text-xs font-bold px-1.5 py-0.5 rounded mx-0.5 ${
+              isReferenced ? 'bg-shift-100 text-shift-800 border border-shift-300' : 'bg-gray-100 text-gray-500 border border-gray-200'
             }`}>
             📎{refId}
           </span>
@@ -220,6 +223,40 @@ function SourceCard({ source, highlighted }: { source: Source; highlighted: bool
   )
 }
 
+// ─── インライン出典バッジ（回答本文中 [REF-N] 用・ホバーTIP付き）──
+function InlineRefBadge({ refId, source, isReferenced }: { refId: string; source: Source; isReferenced: boolean }) {
+  const [showTip, setShowTip] = useState(false)
+  const catInfo = CATEGORY_LABELS[source.category] ?? { label: source.category, icon: FileText }
+  const CatIcon = catInfo.icon
+  return (
+    <span className="relative inline-block">
+      <span
+        onMouseEnter={() => setShowTip(true)}
+        onMouseLeave={() => setShowTip(false)}
+        className={`inline-flex items-center text-xs font-bold px-1.5 py-0.5 rounded cursor-help mx-0.5 transition-colors ${
+          isReferenced
+            ? 'bg-shift-100 text-shift-800 border border-shift-300 hover:bg-shift-200'
+            : 'bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200'
+        }`}>
+        📎{refId}
+      </span>
+      {showTip && (
+        <span className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 bg-gray-900 text-white text-xs rounded-xl p-3 shadow-2xl pointer-events-none block">
+          <span className="flex items-center gap-1.5 mb-2">
+            <CatIcon className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+            <span className="text-gray-300">{catInfo.label}</span>
+            <span className="font-bold text-shift-300 ml-auto">{refId}</span>
+          </span>
+          <span className="font-semibold text-white block mb-1 truncate">{source.filename}</span>
+          {source.pageUrl && <span className="text-blue-300 truncate text-xs block mb-1">{source.pageUrl}</span>}
+          <span className="text-gray-300 leading-relaxed block">{source.summary}</span>
+          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        </span>
+      )}
+    </span>
+  )
+}
+
 // ─── 吹き出しのREFバッジ（ホバーでサマリーポップアップ）───────────
 function RefBadge({ refId, sources }: { refId: string; sources: Source[] }) {
   const [showTip, setShowTip] = useState(false)
@@ -342,7 +379,7 @@ export default function RagChatPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className={`flex h-[calc(100vh-3.5rem)] flex-col transition-all duration-300 ${showSourcePanel ? 'mr-80' : ''}`}>
+    <div className={`flex flex-col -mx-6 -mt-6 h-[calc(100vh-3.5rem)] transition-all duration-300 ${showSourcePanel ? 'mr-80' : ''}`}>
       {/* ヘッダー */}
       <div className="flex-shrink-0 border-b border-gray-200 bg-white px-6 py-3 flex items-center justify-between">
         <div>
@@ -465,7 +502,7 @@ export default function RagChatPage({ params }: { params: { id: string } }) {
                     </div>
                   ) : (
                     <div className="prose-sm">
-                      {renderMarkdown(msg.content, new Set(msg.referencedRefIds ?? []))}
+                      {renderMarkdown(msg.content, new Set(msg.referencedRefIds ?? []), msg.sources ?? [])}
                     </div>
                   )}
                 </div>
