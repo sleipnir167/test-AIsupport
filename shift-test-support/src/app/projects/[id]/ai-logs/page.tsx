@@ -16,13 +16,17 @@ function LogCard({ entry }: { entry: AILogEntry }) {
   const [open, setOpen] = useState(false)
   const [activeSection, setActiveSection] = useState<'system' | 'user' | 'response'>('user')
 
-  // logStage でプランニング / バッチ実行を区別して表示
+  // logStage でプランニング / バッチ実行 / システム分析 を区別して表示
   const typeLabel = entry.type === 'generation'
-    ? (entry.logStage === 'planning' ? '📋 プランニング' : entry.logStage === 'batch' ? '⚡ バッチ実行' : 'テスト生成')
+    ? (entry.logStage === 'planning' ? '📋 プランニング' : entry.logStage === 'batch' ? '⚡ バッチ実行' : entry.logStage === 'system_analysis' ? '🔍 システム分析' : entry.logStage === 'rag_chat' ? '💬 RAGチャット' : 'テスト生成')
     : entry.type === 'review' ? 'AIレビュー' : 'Excel比較'
   const typeBg = entry.type === 'generation'
     ? (entry.logStage === 'planning'
         ? 'bg-blue-100 text-blue-800 border-blue-200'
+        : entry.logStage === 'system_analysis'
+        ? 'bg-teal-100 text-teal-800 border-teal-200'
+        : entry.logStage === 'rag_chat'
+        ? 'bg-purple-100 text-purple-800 border-purple-200'
         : 'bg-shift-100 text-shift-800 border-shift-200')
     : entry.type === 'review' ? 'bg-purple-100 text-purple-800 border-purple-200'
     : 'bg-indigo-100 text-indigo-800 border-indigo-200'
@@ -171,7 +175,7 @@ function LogCard({ entry }: { entry: AILogEntry }) {
 export default function AILogsPage({ params }: { params: { id: string } }) {
   const [logs, setLogs] = useState<AILogEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [filterType, setFilterType] = useState<'all' | 'planning' | 'batch' | 'generation' | 'review' | 'compare'>('all')
+  const [filterType, setFilterType] = useState<'all' | 'planning' | 'batch' | 'system_analysis' | 'rag_chat' | 'generation' | 'review' | 'compare'>('all')
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
 
@@ -187,6 +191,8 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
     const list = logs.filter(l => {
       if (filterType === 'planning' && !(l.type === 'generation' && l.logStage === 'planning')) return false
       if (filterType === 'batch' && !(l.type === 'generation' && l.logStage === 'batch')) return false
+      if (filterType === 'system_analysis' && !(l.type === 'generation' && l.logStage === 'system_analysis')) return false
+      if (filterType === 'rag_chat' && !(l.type === 'generation' && l.logStage === 'rag_chat')) return false
       if (filterType === 'generation' && l.type !== 'generation') return false
       if (filterType === 'review' && l.type !== 'review') return false
       if (filterType === 'compare' && l.type !== 'compare') return false
@@ -221,13 +227,13 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
 
       <div className="grid grid-cols-7 gap-3">
         {[
-          { label: 'やり取り数',       value: `${stats.count}件`,         color: 'text-gray-900' },
-          { label: '📋 プランニング',   value: `${stats.planningCount}回`, color: 'text-blue-600' },
-          { label: '⚡ バッチ実行',     value: `${stats.batchCount}回`,    color: 'text-shift-700' },
-          { label: '生成テスト項目',   value: `${stats.totalItems}件`,     color: 'text-emerald-600' },
-          { label: '推定総トークン',   value: fmtT(stats.totalTokens),     color: 'text-purple-600' },
-          { label: '平均応答時間',     value: fmtMs(stats.avgMs),          color: 'text-green-600' },
-          { label: 'エラー数',         value: `${stats.errors}件`,         color: stats.errors > 0 ? 'text-red-600' : 'text-gray-400' },
+          { label: 'やり取り数',        value: `${stats.count}件`,          color: 'text-gray-900' },
+          { label: '📋 プランニング',    value: `${stats.planningCount}回`,  color: 'text-blue-600' },
+          { label: '⚡ バッチ実行',      value: `${stats.batchCount}回`,     color: 'text-shift-700' },
+          { label: '生成テスト項目',    value: `${stats.totalItems}件`,      color: 'text-emerald-600' },
+          { label: '推定総トークン',    value: fmtT(stats.totalTokens),      color: 'text-purple-600' },
+          { label: '平均応答時間',      value: fmtMs(stats.avgMs),           color: 'text-green-600' },
+          { label: 'エラー数',          value: `${stats.errors}件`,          color: stats.errors > 0 ? 'text-red-600' : 'text-gray-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="card p-3 text-center">
             <p className={clsx('text-lg font-bold', color)}>{value}</p>
@@ -244,12 +250,14 @@ export default function AILogsPage({ params }: { params: { id: string } }) {
         </div>
         <div className="flex gap-1 bg-gray-100 p-1 rounded-xl flex-wrap">
           {([
-            ['all',        'すべて'],
-            ['planning',   '📋 プランニング'],
-            ['batch',      '⚡ バッチ実行'],
-            ['generation', '生成（全）'],
-            ['review',     'レビュー'],
-            ['compare',    'Excel比較'],
+            ['all',             'すべて'],
+            ['planning',        '📋 プランニング'],
+            ['batch',           '⚡ バッチ実行'],
+            ['system_analysis', '🔍 システム分析'],
+            ['rag_chat',        '💬 RAGチャット'],
+            ['generation',      '生成（全）'],
+            ['review',          'レビュー'],
+            ['compare',         'Excel比較'],
           ] as const).map(([v, l]) => (
             <button key={v} onClick={() => setFilterType(v)}
               className={clsx('px-3 py-1.5 rounded-lg text-xs font-medium transition-all',

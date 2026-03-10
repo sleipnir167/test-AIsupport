@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   FolderOpen, FileText, Globe, Code2, Sparkles, ClipboardList,
-  Download, ChevronLeft, LayoutDashboard, ShieldCheck, MessageSquare
+  Download, ChevronLeft, LayoutDashboard, ShieldCheck, MessageSquare, BarChart2, MessageCircle
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -18,11 +18,13 @@ export default function ProjectSidebar({ projectId, projectName, showAiLogsTab =
   const base = `/projects/${projectId}`
 
   const navItems = [
-    { href: base,                       label: 'プロジェクト概要',   icon: FolderOpen,  exact: true },
-    { href: `${base}/documents`,        label: 'ドキュメント管理',   icon: FileText },
-    { href: `${base}/url-analysis`,     label: 'URL構造分析',        icon: Globe },
-    { href: `${base}/source-code`,      label: 'ソースコード取込',   icon: Code2 },
-    { href: `${base}/generate`,         label: 'AIテスト生成',       icon: Sparkles },
+    { href: base,                           label: 'プロジェクト概要',   icon: FolderOpen,  exact: true },
+    { href: `${base}/documents`,            label: 'ドキュメント管理',   icon: FileText },
+    { href: `${base}/url-analysis`,         label: 'URL構造分析',        icon: Globe },
+    { href: `${base}/source-code`,          label: 'ソースコード取込',   icon: Code2 },
+    { href: `${base}/system-analysis`,      label: 'システム分析',       icon: BarChart2 },
+    { href: `${base}/rag-chat`,              label: 'RAG検索チャット',    icon: MessageCircle },
+    { href: `${base}/generate`,             label: 'AIテスト生成',       icon: Sparkles },
     { href: `${base}/test-items`,       label: 'テスト項目書',       icon: ClipboardList },
     { href: `${base}/export`,           label: 'Excel出力',          icon: Download },
     { href: `${base}/review`,           label: 'AIレビュー・評価',   icon: ShieldCheck },
