@@ -11,7 +11,7 @@ import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
 import { getProject, saveAILog, getAdminSettings } from '@/lib/db'
 import { searchChunks } from '@/lib/vector'
-import type { CustomModelEntry } from '@/types'
+import { inferResponseFormat } from '@/lib/ai'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -157,14 +157,12 @@ JSON形式で {"summaries": [{"refId": "REF-N", "summary": "要約文"},...]} �
 
 ${sourcesToSummarize.map(s => `${s.refId} [${s.filename}]:\n${s.excerpt}`).join('\n\n---\n\n').slice(0, 8000)}`
 
+        const sumFmt = inferResponseFormat(model)
         const summaryRes = await client.chat.completions.create({
-          model, 
-          messages: [{ role: 'user', content: summaryPrompt }],
-          max_tokens: 800, 
-          temperature: 0,
-          response_format: { type: 'json_object' },
-          stream: false, // 明示的にストリームでないことを指定
-        }) as OpenAI.Chat.ChatCompletion // ここで型を確定させる
+          model, messages: [{ role: 'user', content: summaryPrompt }],
+          max_tokens: 800, temperature: 0,
+          ...(sumFmt !== 'none' ? { response_format: { type: sumFmt } as OpenAI.ResponseFormatJSONObject } : {}),
+        })
 
         const summaryRaw = summaryRes.choices?.[0]?.message?.content ?? '{}'
         const summaryData = JSON.parse(summaryRaw.replace(/```json|```/g, '').trim()) as { summaries: { refId: string; summary: string }[] }
