@@ -158,10 +158,13 @@ JSON形式で {"summaries": [{"refId": "REF-N", "summary": "要約文"},...]} �
 ${sourcesToSummarize.map(s => `${s.refId} [${s.filename}]:\n${s.excerpt}`).join('\n\n---\n\n').slice(0, 8000)}`
 
         const summaryRes = await client.chat.completions.create({
-          model, messages: [{ role: 'user', content: summaryPrompt }],
-          max_tokens: 800, temperature: 0,
+          model, 
+          messages: [{ role: 'user', content: summaryPrompt }],
+          max_tokens: 800, 
+          temperature: 0,
           response_format: { type: 'json_object' },
-        } as Parameters<typeof client.chat.completions.create>[0])
+          stream: false, // 明示的にストリームでないことを指定
+        }) as OpenAI.Chat.ChatCompletion // ここで型を確定させる
 
         const summaryRaw = summaryRes.choices?.[0]?.message?.content ?? '{}'
         const summaryData = JSON.parse(summaryRaw.replace(/```json|```/g, '').trim()) as { summaries: { refId: string; summary: string }[] }
