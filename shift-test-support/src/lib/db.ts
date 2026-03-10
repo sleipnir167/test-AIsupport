@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis'
-import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings, TestPlan } from '@/types'
+import type { Project, TestItem, Document, SiteAnalysis, AILogEntry, PromptTemplate, AdminSettings, TestPlan, SystemAnalysis } from '@/types'
 import type { RefMapEntry } from '@/lib/ai'
 
 export const redis = new Redis({
@@ -14,7 +14,8 @@ const KEY = {
   doc:           (id: string)        => `doc:${id}`,
   testList:      (projectId: string) => `project:${projectId}:testitems`,
   testItem:      (id: string)        => `testitem:${id}`,
-  siteAnalysis:  (projectId: string) => `project:${projectId}:siteanalysis`,
+  siteAnalysis:   (projectId: string) => `project:${projectId}:siteanalysis`,
+  systemAnalysis: (projectId: string, testPhase: string) => `project:${projectId}:systemanalysis:${encodeURIComponent(testPhase)}`,
   testPlan:      (projectId: string) => `project:${projectId}:testplan`,
   /** プランニング時のREFマップ（チャンク→REF番号の対応表）を保存 */
   refMap:        (projectId: string) => `project:${projectId}:refmap`,
@@ -367,4 +368,17 @@ export async function saveRefMap(projectId: string, refMap: RefMapEntry[]): Prom
  */
 export async function getRefMap(projectId: string): Promise<RefMapEntry[] | null> {
   return redis.get<RefMapEntry[]>(KEY.refMap(projectId))
+}
+
+// ─── システム分析 ─────────────────────────────────────────────
+export async function getSystemAnalysis(projectId: string, testPhase: string): Promise<SystemAnalysis | null> {
+  return redis.get<SystemAnalysis>(KEY.systemAnalysis(projectId, testPhase))
+}
+
+export async function saveSystemAnalysis(record: SystemAnalysis): Promise<void> {
+  await redis.set(KEY.systemAnalysis(record.projectId, record.testPhase), record)
+}
+
+export async function deleteSystemAnalysis(projectId: string, testPhase: string): Promise<void> {
+  await redis.del(KEY.systemAnalysis(projectId, testPhase))
 }

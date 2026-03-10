@@ -363,6 +363,18 @@ export const TEST_PHASE_DESCRIPTIONS: Record<TestPhase, string> = {
   'セキュリティテスト': 'OWASP Top10・認証・認可・暗号化・入力検証などセキュリティ要件を検証する',
 }
 
+// ─── システム分析 ────────────────────────────────────────────
+export interface SystemAnalysis {
+  projectId: string
+  testPhase: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  analysis: Record<string, any>
+  model: string
+  ragBreakdown: { doc: number; site: number; src: number }
+  createdAt: string
+  updatedAt: string
+}
+
 export const TEST_PHASE_PERSPECTIVES: Record<TestPhase, string[]> = {
   '単体テスト':         ['正常系', '異常系', '境界値'],
   '結合テスト':         ['機能テスト', '正常系', '異常系', '境界値'],
