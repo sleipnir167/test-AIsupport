@@ -1,9 +1,9 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Search, Filter, Download, Edit3, Trash2, ChevronDown, ChevronRight,
   X, Save, Loader2, BookOpen, FileText, Globe, Code2, ExternalLink,
-  AlertCircle, Zap
+  AlertCircle, Zap, MessageCircle, Send, Sparkles, Database, RotateCcw
 } from 'lucide-react'
 import { priorityColors, priorityLabels, automatableColors, automatableLabels } from '@/lib/mock-data'
 import type { TestItem, Priority, Automatable, TestPerspective } from '@/types'
@@ -208,6 +208,277 @@ function AutomatableReasonModal({ item, onClose }: { item: TestItem; onClose: ()
 }
 
 // 出典バッジ（テーブル行用）
+// ─── RAGチャットモーダル ──────────────────────────────────────
+interface RagMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  isError?: boolean
+}
+
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
+function renderSimpleMarkdown(text: string): React.ReactNode[] {
+  return text.split('\n').map((line, i) => {
+    if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h3>
+    if (line.startsWith('## ')) return <h2 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(3)}</h2>
+    if (line.startsWith('# ')) return <h2 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(2)}</h2>
+    if (line.startsWith('- ') || line.startsWith('* ')) return <li key={i} className="text-sm text-gray-700 ml-4 my-0.5 list-disc">{line.slice(2)}</li>
+    if (line.trim() === '') return <div key={i} className="h-2" />
+    // inline bold
+    const parts = line.split(/(\*\*[^*]+\*\*)/g)
+    return (
+      <p key={i} className="text-sm text-gray-700 my-0.5 leading-relaxed">
+        {parts.map((p, pi) =>
+          p.startsWith('**') && p.endsWith('**')
+            ? <strong key={pi} className="font-semibold">{p.slice(2, -2)}</strong>
+            : <span key={pi}>{p}</span>
+        )}
+      </p>
+    )
+  })
+}
+
+const TEST_CONTEXT_SUGGESTIONS = [
+  'このテストケースの期待結果をより詳しく教えてください',
+  '類似するテストケースはありますか？',
+  'このテストの前提条件を確認させてください',
+  'このテストで想定されるバグパターンは？',
+  'テスト手順の詳細を教えてください',
+  '関連するAPIや画面はどれですか？',
+]
+
+function RagChatModal({ item, projectId, onClose }: {
+  item: TestItem
+  projectId: string
+  onClose: () => void
+}) {
+  const [messages, setMessages] = useState<RagMessage[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const testContext = `【対象テストケース】\nテストID: ${item.testId}\nカテゴリ: ${item.categoryMajor} > ${item.categoryMinor}\n観点: ${item.testPerspective}\nテスト項目名: ${item.testTitle}${item.expectedResult ? `\n期待結果: ${item.expectedResult}` : ''}${item.priorityReason ? `\n優先度根拠: ${item.priorityReason}` : ''}`
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const sendMessage = useCallback(async (questionOverride?: string) => {
+    const question = (questionOverride ?? input).trim()
+    if (!question || loading) return
+    setInput('')
+
+    const userMsg: RagMessage = { id: uuidv4(), role: 'user', content: question }
+    setMessages(prev => [...prev, userMsg])
+    setLoading(true)
+
+    try {
+      const fullQuestion = `${testContext}\n\n【質問】\n${question}`
+      const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
+      const res = await fetch('/api/rag-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          question: fullQuestion,
+          history,
+          ragTopK: { doc: 12, site: 5, src: 10 },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || '回答の生成に失敗しました')
+
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: 'assistant', content: data.answer,
+      }])
+    } catch (e) {
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: 'assistant',
+        content: `エラー: ${e instanceof Error ? e.message : String(e)}`,
+        isError: true,
+      }])
+    } finally {
+      setLoading(false)
+    }
+  }, [input, loading, messages, projectId, testContext])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative bg-white w-full sm:max-w-3xl h-[85vh] sm:h-[82vh] rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+
+        {/* Header */}
+        <div className="flex-shrink-0 bg-gradient-to-r from-shift-800 to-shift-700 text-white px-5 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                <MessageCircle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-shift-300 font-medium mb-0.5">RAGチャット — テストケースに質問</p>
+                <p className="text-sm font-bold text-white leading-snug truncate">{item.testTitle}</p>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="text-xs text-shift-300 font-mono">{item.testId}</span>
+                  <span className="text-xs text-shift-300">·</span>
+                  <span className="text-xs text-shift-300">{item.categoryMajor}</span>
+                  <span className="text-xs text-shift-300">·</span>
+                  <span className="text-xs bg-white/15 px-1.5 py-0.5 rounded text-shift-100">{item.testPerspective}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {messages.length > 0 && (
+                <button
+                  onClick={() => setMessages([])}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-shift-300 hover:text-white"
+                  title="チャットをクリア"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-4">
+
+          {/* 初期状態 */}
+          {messages.length === 0 && (
+            <div className="space-y-5">
+              {/* テストケース概要カード */}
+              <div className="bg-white border border-shift-100 rounded-xl p-4 shadow-sm">
+                <p className="text-xs font-semibold text-shift-700 mb-2 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5" />対象テストケース
+                </p>
+                <p className="text-sm font-semibold text-gray-900 mb-1">{item.testTitle}</p>
+                {item.expectedResult && (
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    <span className="font-medium text-gray-600">期待結果:</span> {item.expectedResult}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{item.categoryMajor}</span>
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{item.categoryMinor}</span>
+                  <span className="text-xs bg-shift-50 text-shift-700 px-2 py-0.5 rounded-full border border-shift-200">{item.testPerspective}</span>
+                </div>
+              </div>
+
+              {/* サジェスト質問 */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2.5 px-1">
+                  よく使われる質問
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {TEST_CONTEXT_SUGGESTIONS.map((q, i) => (
+                    <button key={i} onClick={() => sendMessage(q)}
+                      className="text-left text-xs text-gray-700 bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 hover:border-shift-400 hover:bg-shift-50 hover:text-shift-800 transition-all shadow-sm">
+                      <Sparkles className="w-3 h-3 text-shift-400 inline mr-1.5" />{q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center gap-2 py-2">
+                <Database className="w-3.5 h-3.5 text-gray-300" />
+                <p className="text-xs text-gray-400">登録済みドキュメント・ソースコードをもとに回答します</p>
+              </div>
+            </div>
+          )}
+
+          {/* メッセージ */}
+          {messages.map(msg => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'user' ? (
+                <div className="max-w-[78%] bg-shift-700 text-white rounded-2xl rounded-tr-sm px-4 py-3 shadow-sm">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                </div>
+              ) : (
+                <div className={`max-w-[88%] bg-white border rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm ${msg.isError ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+                  {msg.isError ? (
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-700">{msg.content}</p>
+                    </div>
+                  ) : (
+                    <div>{renderSimpleMarkdown(msg.content)}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm">
+                <div className="flex items-center gap-2 text-gray-400">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">RAGを検索して回答を生成中...</span>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* 入力エリア */}
+        <div className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+          <div className="flex items-end gap-2">
+            <div className="flex-1 relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="このテストケースについて質問してください... (Shift+Enterで改行)"
+                rows={1}
+                className="w-full input py-3 pr-4 resize-none overflow-hidden text-sm leading-relaxed"
+                style={{ minHeight: '48px', maxHeight: '140px' }}
+                onInput={e => {
+                  const el = e.currentTarget
+                  el.style.height = 'auto'
+                  el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+                }}
+                disabled={loading}
+              />
+            </div>
+            <button
+              onClick={() => sendMessage()}
+              disabled={!input.trim() || loading}
+              className="btn-primary px-4 py-3 flex-shrink-0 disabled:opacity-50 rounded-xl">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-xs text-center text-gray-400 mt-1.5">
+            Enter で送信 / Shift+Enter で改行 ／ テストケースの内容を踏まえて回答します
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SourceBadge({ item, onClick }: { item: TestItem; onClick: () => void }) {
   const count = item.sourceRefs?.length ?? 0
   if (count === 0) {
@@ -246,6 +517,8 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
   // ■2: 優先度・自動化根拠モーダル用state
   const [priorityReasonItem, setPriorityReasonItem] = useState<TestItem | null>(null)
   const [automatableReasonItem, setAutomatableReasonItem] = useState<TestItem | null>(null)
+  // RAGチャットモーダル
+  const [ragChatItem, setRagChatItem] = useState<TestItem | null>(null)
 
   const fetchItems = async () => {
     try {
@@ -349,6 +622,10 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
       {automatableReasonItem && (
         <AutomatableReasonModal item={automatableReasonItem} onClose={() => setAutomatableReasonItem(null)} />
       )}
+      {/* RAGチャットモーダル */}
+      {ragChatItem && (
+        <RagChatModal item={ragChatItem} projectId={params.id} onClose={() => setRagChatItem(null)} />
+      )}
 
       <div className="flex items-center justify-between">
         <div>
@@ -450,7 +727,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                         <th className="w-16 text-center">優先度</th>
                         <th className="w-20 text-center">自動化</th>
                         <th className="w-16 text-center">出典</th>
-                        <th className="w-16 text-center">操作</th>
+                        <th className="w-20 text-center">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -539,6 +816,13 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
                               </td>
                               <td>
                                 <div className="flex gap-1 justify-center">
+                                  <button
+                                    onClick={() => setRagChatItem(item)}
+                                    title="このテストケースについてRAGチャットで質問"
+                                    className="p-1 rounded text-gray-400 hover:bg-shift-50 hover:text-shift-700"
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                  </button>
                                   <button onClick={() => startEdit(item)} className="p-1 rounded text-gray-400 hover:bg-shift-50 hover:text-shift-700">
                                     <Edit3 className="w-3.5 h-3.5" />
                                   </button>

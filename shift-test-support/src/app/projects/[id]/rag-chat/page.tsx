@@ -379,7 +379,7 @@ export default function RagChatPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className={`flex flex-col -mx-6 -mt-6 h-[calc(100vh-3.5rem)] transition-all duration-300 ${showSourcePanel ? 'mr-80' : ''}`}>
+    <div className={`flex flex-col -mx-6 h-[calc(100vh-3.5rem)] transition-all duration-300 ${showSourcePanel ? 'mr-80' : ''}`}>
       {/* ヘッダー */}
       <div className="flex-shrink-0 border-b border-gray-200 bg-white px-6 py-3 flex items-center justify-between">
         <div>
