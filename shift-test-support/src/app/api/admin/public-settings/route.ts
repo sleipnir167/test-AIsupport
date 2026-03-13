@@ -23,8 +23,17 @@ export async function GET() {
       defaultExecModelId:   s.defaultExecModelId    ?? 'deepseek/deepseek-v3.2',
       defaultReviewModelId: s.defaultReviewModelId  ?? 'google/gemini-2.5-flash',
       // ★ 追加: モデルリストとバッチサイズ初期値
-      customModelList:      s.customModelList       ?? [],
-      defaultBatchSize:     s.defaultBatchSize      ?? 50,
+      customModelList:           s.customModelList            ?? [],
+      defaultBatchSize:          s.defaultBatchSize           ?? 50,
+      defaultRagChatModelId:     s.defaultRagChatModelId      ?? '',
+      defaultDesignChatModelId:  s.defaultDesignChatModelId   ?? '',
+      ragChatTemperature:        s.ragChatTemperature         ?? 0.3,
+      ragChatMaxTokens:          s.ragChatMaxTokens           ?? 4000,
+      designChatTemperature:     s.designChatTemperature      ?? 0.3,
+      designChatMaxTokens:       s.designChatMaxTokens        ?? 4000,
+      ragChatTopKDoc:            s.ragChatTopKDoc             ?? 12,
+      ragChatTopKSite:           s.ragChatTopKSite            ?? 5,
+      ragChatTopKSrc:            s.ragChatTopKSrc             ?? 10,
     })
   } catch {
     return NextResponse.json({
@@ -38,6 +47,15 @@ export async function GET() {
       defaultReviewModelId: 'google/gemini-2.5-flash',
       customModelList: [],
       defaultBatchSize: 50,
+      defaultRagChatModelId: '',
+      defaultDesignChatModelId: '',
+      ragChatTemperature: 0.3,
+      ragChatMaxTokens: 4000,
+      designChatTemperature: 0.3,
+      designChatMaxTokens: 4000,
+      ragChatTopKDoc: 12,
+      ragChatTopKSite: 5,
+      ragChatTopKSrc: 10,
     })
   }
 }

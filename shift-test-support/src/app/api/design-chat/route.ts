@@ -61,7 +61,25 @@ export async function POST(req: Request) {
     const existingItems = await getTestItems(projectId)
     const activeItems = existingItems.filter(t => !t.isDeleted)
 
-    const { client, model } = createAIClient(modelOverride)
+    // モデル決定（設計チャット専用 → プランニングモデル の優先順）
+    let resolvedModel = modelOverride
+    if (!resolvedModel) {
+      try {
+        const adminSettings = await getAdminSettings()
+        resolvedModel = (adminSettings as { defaultDesignChatModelId?: string; defaultPlanModelId?: string }).defaultDesignChatModelId
+          || (adminSettings as { defaultPlanModelId?: string }).defaultPlanModelId
+      } catch {}
+    }
+    const { client, model } = createAIClient(resolvedModel)
+
+    // Temperature・MaxTokens を管理設定から取得
+    let designTemperature = 0.3
+    let designMaxTokens = 4000
+    try {
+      const adminSettings = await getAdminSettings() as { designChatTemperature?: number; designChatMaxTokens?: number }
+      designTemperature = adminSettings.designChatTemperature ?? 0.3
+      designMaxTokens   = adminSettings.designChatMaxTokens   ?? 4000
+    } catch {}
 
     // 現在のテスト項目サマリーを作成
     const itemsSummary = activeItems.slice(0, 50).map(t =>
@@ -124,8 +142,8 @@ testPerspectiveは必ず以下のいずれかにしてください: 機能テス
     const completion = await client.chat.completions.create({
       model,
       messages,
-      temperature: 0.3,
-      max_tokens: 4000,
+      temperature: designTemperature,
+      max_tokens: designMaxTokens,
     })
 
     const rawContent = completion.choices[0]?.message?.content || '{}'

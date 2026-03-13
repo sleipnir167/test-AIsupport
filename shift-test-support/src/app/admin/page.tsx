@@ -4,7 +4,7 @@ import {
   Lock, Settings, FileText, Save, Loader2,
   Eye, EyeOff, CheckCircle2, AlertTriangle, Sliders,
   TerminalSquare, ChevronDown, ChevronUp, Info, Shield,
-  Monitor, MessageSquare, Type, ToggleLeft, ToggleRight,
+  Monitor, MessageSquare, MessageCircle, Type, ToggleLeft, ToggleRight,
   Plus, Trash2, RefreshCw, BookOpen, Search, Database, ChevronRight, ExternalLink, Edit3
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -31,8 +31,17 @@ const DEFAULT_SETTINGS: AdminSettings = {
   customModelList:       [],
   defaultBatchSize:      50,
   refExcerptLength:      250,
-  useHybridSearch:       false,
-  useReranking:          false,
+  useHybridSearch:             false,
+  useReranking:                false,
+  defaultRagChatModelId:       '',
+  defaultDesignChatModelId:    '',
+  ragChatTemperature:          0.3,
+  ragChatMaxTokens:            4000,
+  designChatTemperature:       0.3,
+  designChatMaxTokens:         4000,
+  ragChatTopKDoc:              12,
+  ragChatTopKSite:             5,
+  ragChatTopKSrc:              10,
 }
 
 const DEFAULT_TEMPLATE: PromptTemplate = {
@@ -61,7 +70,7 @@ const MODEL_LIMITS = [
 ]
 
 // ─── タブ型 ────────────────────────────────────────────────────
-type TabType = 'settings' | 'models' | 'modellist' | 'display' | 'labels' | 'prompts' | 'refmap'
+type TabType = 'settings' | 'models' | 'modellist' | 'ragchat' | 'display' | 'labels' | 'prompts' | 'refmap'
 
 // ─── ModelPickerコンポーネント ─────────────────────────────────
 function ModelPicker({
@@ -559,6 +568,7 @@ export default function AdminPage() {
     { id: 'settings',   label: 'AI実行設定',             icon: Sliders },
     { id: 'models',     label: 'モデル初期値',            icon: Settings },
     { id: 'modellist',  label: 'モデル一覧管理',          icon: Plus },
+    { id: 'ragchat',    label: 'チャット設定',            icon: MessageSquare },
     { id: 'display',    label: '表示制御',               icon: Monitor },
     { id: 'labels',     label: 'UI文言',                 icon: Type },
     { id: 'prompts',    label: 'プロンプトテンプレート',  icon: FileText },
@@ -832,12 +842,146 @@ export default function AdminPage() {
                 onChange={v => setSettings(s => ({ ...s, defaultReviewModelId: v }))}
                 models={settings.customModelList ?? []}
               />
+              <hr className="border-gray-800" />
+              <ModelPicker
+                label="④ RAGチャット用デフォルトモデル"
+                description="テスト項目書・RAGチャット画面で使用するモデル。空欄の場合は①プランニング用モデルが適用されます。"
+                value={settings.defaultRagChatModelId ?? ''}
+                onChange={v => setSettings(s => ({ ...s, defaultRagChatModelId: v }))}
+                models={[{ id: '', label: '（プランニング用モデルと共通）' }, ...(settings.customModelList ?? [])]}
+              />
+              <hr className="border-gray-800" />
+              <ModelPicker
+                label="⑤ テスト設計チャット用デフォルトモデル"
+                description="テスト設計チャットポップアップで使用するモデル。空欄の場合は①プランニング用モデルが適用されます。"
+                value={settings.defaultDesignChatModelId ?? ''}
+                onChange={v => setSettings(s => ({ ...s, defaultDesignChatModelId: v }))}
+                models={[{ id: '', label: '（プランニング用モデルと共通）' }, ...(settings.customModelList ?? [])]}
+              />
             </div>
 
             <button onClick={saveSettings} disabled={saving}
               className="flex items-center gap-2 px-6 py-3 bg-shift-800 hover:bg-shift-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               {saving ? '保存中...' : 'モデル初期値を保存'}
+            </button>
+          </div>
+        )}
+
+        {/* ━━━━━━━━━━━━━━━━━ チャット設定 ━━━━━━━━━━━━━━━━━ */}
+        {activeTab === 'ragchat' && (
+          <div className="space-y-6">
+            <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl px-4 py-3 text-blue-300 text-sm flex items-start gap-2">
+              <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold">RAGチャット・テスト設計チャットの設定</p>
+                <p className="text-xs text-blue-400/80 mt-0.5">
+                  モデルの初期値は「モデル初期値」タブで設定できます。ここではTemperature・MaxTokens・RAG検索件数を設定します。
+                </p>
+              </div>
+            </div>
+
+            {/* RAGチャット設定 */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <h2 className="font-bold text-white mb-4 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-400" />RAGチャット設定
+              </h2>
+              <div className="grid grid-cols-2 gap-5">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Temperature（回答の創造性）</label>
+                  <div className="flex items-center gap-3">
+                    <input type="range" min="0" max="1" step="0.05"
+                      value={settings.ragChatTemperature ?? 0.3}
+                      onChange={e => setSettings(s => ({ ...s, ragChatTemperature: parseFloat(e.target.value) }))}
+                      className="flex-1 accent-blue-600" />
+                    <span className="text-white font-mono w-10 text-right">{(settings.ragChatTemperature ?? 0.3).toFixed(2)}</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">推奨: 0.2〜0.4（事実回答なので低め推奨）</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Max Output Tokens</label>
+                  <input type="number" min="500" max="16000" step="500"
+                    value={settings.ragChatMaxTokens ?? 4000}
+                    onChange={e => setSettings(s => ({ ...s, ragChatMaxTokens: parseInt(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <p className="text-xs text-gray-600 mt-1">推奨: 2000〜6000</p>
+                </div>
+              </div>
+
+              <hr className="border-gray-800 my-5" />
+              <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                <Database className="w-4 h-4 text-shift-400" />RAG検索件数（TopK）
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                チャット時にベクトル検索で取得するチャンク件数。多いほど精度が上がりますが、コンテキスト長・コストが増加します。
+              </p>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">ドキュメント（仕様書等）</label>
+                  <input type="number" min="1" max="30"
+                    value={settings.ragChatTopKDoc ?? 12}
+                    onChange={e => setSettings(s => ({ ...s, ragChatTopKDoc: parseInt(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <p className="text-xs text-gray-600 mt-1">推奨: 10〜15</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">サイト分析</label>
+                  <input type="number" min="1" max="20"
+                    value={settings.ragChatTopKSite ?? 5}
+                    onChange={e => setSettings(s => ({ ...s, ragChatTopKSite: parseInt(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <p className="text-xs text-gray-600 mt-1">推奨: 3〜8</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">ソースコード</label>
+                  <input type="number" min="1" max="30"
+                    value={settings.ragChatTopKSrc ?? 10}
+                    onChange={e => setSettings(s => ({ ...s, ragChatTopKSrc: parseInt(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <p className="text-xs text-gray-600 mt-1">推奨: 8〜15</p>
+                </div>
+              </div>
+            </div>
+
+            {/* テスト設計チャット設定 */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <h2 className="font-bold text-white mb-4 flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-violet-400" />テスト設計チャット設定
+              </h2>
+              <div className="grid grid-cols-2 gap-5">
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Temperature（提案の多様性）</label>
+                  <div className="flex items-center gap-3">
+                    <input type="range" min="0" max="1" step="0.05"
+                      value={settings.designChatTemperature ?? 0.3}
+                      onChange={e => setSettings(s => ({ ...s, designChatTemperature: parseFloat(e.target.value) }))}
+                      className="flex-1 accent-violet-600" />
+                    <span className="text-white font-mono w-10 text-right">{(settings.designChatTemperature ?? 0.3).toFixed(2)}</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">推奨: 0.2〜0.4（安定したテスト項目生成向け）</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1.5 block">Max Output Tokens</label>
+                  <input type="number" min="500" max="16000" step="500"
+                    value={settings.designChatMaxTokens ?? 4000}
+                    onChange={e => setSettings(s => ({ ...s, designChatMaxTokens: parseInt(e.target.value) }))}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
+                  <p className="text-xs text-gray-600 mt-1">推奨: 3000〜6000（テスト項目が多い場合は増やす）</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-800/40 border border-gray-700 rounded-xl px-4 py-3 text-gray-300 text-xs">
+              <p className="font-semibold mb-1 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-blue-400" />モデルの設定について
+              </p>
+              <p>各チャットで使用するモデルは「モデル初期値」タブの ④RAGチャット用・⑤テスト設計チャット用 で設定できます。未設定の場合は①プランニング用モデルが使われます。</p>
+            </div>
+
+            <button onClick={saveSettings} disabled={saving}
+              className="flex items-center gap-2 px-6 py-3 bg-shift-800 hover:bg-shift-700 text-white rounded-xl font-semibold text-sm transition-colors disabled:opacity-50">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? '保存中...' : 'チャット設定を保存'}
             </button>
           </div>
         )}

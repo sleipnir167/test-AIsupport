@@ -289,6 +289,26 @@ export interface AdminSettings {
   // ─── REF抜粋文字数 ────────────────────────────────────────────
   refExcerptLength: number         // REFマップ・出典情報のexcerpt文字数（デフォルト: 250）
 
+  // ─── RAG・チャット機能のモデル設定 ────────────────────────────
+  /** RAGチャット用デフォルトモデルID (未設定時は defaultPlanModelId を使用) */
+  defaultRagChatModelId?: string
+  /** テスト設計チャット用デフォルトモデルID (未設定時は defaultPlanModelId を使用) */
+  defaultDesignChatModelId?: string
+  /** RAGチャット Temperature */
+  ragChatTemperature?: number
+  /** RAGチャット Max Tokens */
+  ragChatMaxTokens?: number
+  /** テスト設計チャット Temperature */
+  designChatTemperature?: number
+  /** テスト設計チャット Max Tokens */
+  designChatMaxTokens?: number
+  /** RAGチャット RAG検索件数（ドキュメント） */
+  ragChatTopKDoc?: number
+  /** RAGチャット RAG検索件数（サイト分析） */
+  ragChatTopKSite?: number
+  /** RAGチャット RAG検索件数（ソースコード） */
+  ragChatTopKSrc?: number
+
   // ─── 高度機能フラグ（環境変数で制御、管理画面で参照） ──────────
   /** ③ ハイブリッド検索 (USE_HYBRID_SEARCH=true で有効) */
   useHybridSearch: boolean

@@ -64,18 +64,35 @@ export async function POST(req: Request) {
     const project = await getProject(projectId)
     if (!project) return NextResponse.json({ error: 'プロジェクトが見つかりません' }, { status: 404 })
 
-    // モデル決定
+    // モデル決定（RAGチャット専用モデル → プランニングモデル の優先順）
     let finalModel = modelOverride
     if (!finalModel) {
-      try { finalModel = ((await getAdminSettings()) as { defaultPlanModelId?: string }).defaultPlanModelId } catch {}
+      try {
+        const adminSettings = await getAdminSettings()
+        finalModel = (adminSettings as { defaultRagChatModelId?: string; defaultPlanModelId?: string }).defaultRagChatModelId
+          || (adminSettings as { defaultPlanModelId?: string }).defaultPlanModelId
+      } catch {}
     }
     const { client, model } = createAIClient(finalModel)
 
+    // 管理設定から RAG TopK を取得（リクエスト値が優先）
+    let resolvedTopK = ragTopK
+    try {
+      const adminSettings = await getAdminSettings() as {
+        ragChatTopKDoc?: number; ragChatTopKSite?: number; ragChatTopKSrc?: number
+      }
+      resolvedTopK = {
+        doc:  ragTopK.doc  !== 10 ? ragTopK.doc  : (adminSettings.ragChatTopKDoc  ?? 12),
+        site: ragTopK.site !== 5  ? ragTopK.site : (adminSettings.ragChatTopKSite ?? 5),
+        src:  ragTopK.src  !== 8  ? ragTopK.src  : (adminSettings.ragChatTopKSrc  ?? 10),
+      }
+    } catch {}
+
     // RAG検索（質問文でベクトル検索）
     const [docChunks, siteChunks, srcChunks] = await Promise.all([
-      searchChunks(question, projectId, ragTopK.doc),
-      searchChunks(question, projectId, ragTopK.site, 'site_analysis'),
-      searchChunks(question, projectId, ragTopK.src, 'source_code'),
+      searchChunks(question, projectId, resolvedTopK.doc),
+      searchChunks(question, projectId, resolvedTopK.site, 'site_analysis'),
+      searchChunks(question, projectId, resolvedTopK.src, 'source_code'),
     ])
 
     const allChunks = [...docChunks, ...siteChunks, ...srcChunks]
@@ -125,6 +142,15 @@ export async function POST(req: Request) {
 RAGコンテキスト（参照可能な情報）:${context || '\n（ドキュメントが登録されていません）'}`
 
     const userPrompt = question
+
+    // 管理設定から Temperature・MaxTokens を取得
+    let ragTemperature = 0.3
+    let ragMaxTokens = 4000
+    try {
+      const adminSettings = await getAdminSettings() as { ragChatTemperature?: number; ragChatMaxTokens?: number }
+      ragTemperature = adminSettings.ragChatTemperature ?? 0.3
+      ragMaxTokens   = adminSettings.ragChatMaxTokens   ?? 4000
+    } catch {}
 
     // AI呼び出し
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
