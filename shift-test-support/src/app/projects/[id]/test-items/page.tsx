@@ -482,7 +482,7 @@ function RagChatModal({ item, projectId, onClose }: {
 
 // ─── テスト設計チャットポップアップ ──────────────────────────────
 interface DesignAction {
-  type: 'add' | 'update'
+  type: 'add' | 'update' | 'delete'
   item: Partial<TestItem> & { id?: string; testId?: string }
   description: string
 }
@@ -785,10 +785,14 @@ function DesignChatPopup({
                                 <div className="flex items-center gap-1.5 mb-1 flex-wrap">
                                   <span className={clsx(
                                     'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold',
-                                    action.type === 'add' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                                    action.type === 'add' ? 'bg-blue-100 text-blue-700' :
+                                    action.type === 'delete' ? 'bg-red-100 text-red-700' :
+                                    'bg-amber-100 text-amber-700'
                                   )}>
-                                    {action.type === 'add' ? <PlusCircle className="w-3 h-3" /> : <Edit3 className="w-3 h-3" />}
-                                    {action.type === 'add' ? '追加' : '編集'}
+                                    {action.type === 'add' ? <PlusCircle className="w-3 h-3" /> :
+                                     action.type === 'delete' ? <Trash2 className="w-3 h-3" /> :
+                                     <Edit3 className="w-3 h-3" />}
+                                    {action.type === 'add' ? '追加' : action.type === 'delete' ? '削除' : '編集'}
                                   </span>
                                   {action.item.priority && priorityBadge(action.item.priority as string)}
                                   {action.item.testPerspective && (

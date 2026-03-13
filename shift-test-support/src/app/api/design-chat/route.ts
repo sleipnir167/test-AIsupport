@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { v4 as uuidv4 } from 'uuid'
-import { getTestItems, saveTestItem, updateTestItem, getAdminSettings } from '@/lib/db'
+import { getTestItems, saveTestItem, updateTestItem, softDeleteTestItem, getAdminSettings } from '@/lib/db'
 import type { TestItem, Priority, Automatable, TestPerspective } from '@/types'
 
 export const maxDuration = 120
@@ -30,7 +30,7 @@ function createAIClient(modelOverride?: string): { client: OpenAI; model: string
 }
 
 export interface DesignAction {
-  type: 'add' | 'update'
+  type: 'add' | 'update' | 'delete'
   item: Partial<TestItem> & { id?: string }
   description: string // AIが生成した変更説明
 }
@@ -82,8 +82,9 @@ export async function POST(req: Request) {
     } catch {}
 
     // 現在のテスト項目サマリーを作成
+    // AIが update/delete 時に内部ID(uuid)を正しく参照できるよう id も含める
     const itemsSummary = activeItems.slice(0, 50).map(t =>
-      `- [${t.testId}] ${t.categoryMajor} > ${t.categoryMinor} | ${t.testPerspective} | ${t.testTitle} (優先度:${t.priority})`
+      `- [${t.testId}] id:${t.id} | ${t.categoryMajor} > ${t.categoryMinor} | ${t.testPerspective} | ${t.testTitle} (優先度:${t.priority})`
     ).join('\n')
 
     const systemPrompt = `あなたはソフトウェアテスト設計の専門家AIです。
@@ -120,14 +121,22 @@ ${itemsSummary || '（まだテスト項目がありません）'}
       "type": "update",
       "description": "このアクションの説明",
       "item": {
-        "id": "既存テスト項目のID",
+        "id": "テスト項目一覧の id:xxxxx の部分（UUIDそのまま）",
         "testTitle": "更新後のテスト項目名",
         "expectedResult": "更新後の期待結果"
+      }
+    },
+    {
+      "type": "delete",
+      "description": "このアクションの説明（削除理由）",
+      "item": {
+        "id": "テスト項目一覧の id:xxxxx の部分（UUIDそのまま）"
       }
     }
   ]
 }
 
+【重要】update/deleteのidは必ずテスト項目一覧の「id:xxxxx」の値（UUID）を使用してください。testId（TC-001など）ではありません。
 testPerspectiveは必ず以下のいずれかにしてください: 機能テスト, 正常系, 異常系, 境界値, セキュリティ, 操作性, 性能`
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -196,6 +205,8 @@ testPerspectiveは必ず以下のいずれかにしてください: 機能テス
         } else if (action.type === 'update' && action.item.id) {
           const { id, ...rest } = action.item
           await updateTestItem({ id, ...rest })
+        } else if (action.type === 'delete' && action.item.id) {
+          await softDeleteTestItem(action.item.id)
         }
       }
 
@@ -258,6 +269,8 @@ export async function PUT(req: Request) {
       } else if (action.type === 'update' && action.item.id) {
         const { id, ...rest } = action.item
         await updateTestItem({ id, ...rest })
+      } else if (action.type === 'delete' && action.item.id) {
+        await softDeleteTestItem(action.item.id)
       }
     }
 
