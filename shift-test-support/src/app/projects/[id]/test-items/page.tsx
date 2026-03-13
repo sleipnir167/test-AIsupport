@@ -3,7 +3,8 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Search, Filter, Download, Edit3, Trash2, ChevronDown, ChevronRight,
   X, Save, Loader2, BookOpen, FileText, Globe, Code2, ExternalLink,
-  AlertCircle, Zap, MessageCircle, Send, Sparkles, Database, RotateCcw
+  AlertCircle, Zap, MessageCircle, Send, Sparkles, Database, RotateCcw,
+  Bot, GripVertical, CheckCircle, PlusCircle, RefreshCw, Minimize2, Maximize2
 } from 'lucide-react'
 import { priorityColors, priorityLabels, automatableColors, automatableLabels } from '@/lib/mock-data'
 import type { TestItem, Priority, Automatable, TestPerspective } from '@/types'
@@ -479,6 +480,413 @@ function RagChatModal({ item, projectId, onClose }: {
   )
 }
 
+// ─── テスト設計チャットポップアップ ──────────────────────────────
+interface DesignAction {
+  type: 'add' | 'update'
+  item: Partial<TestItem> & { id?: string; testId?: string }
+  description: string
+}
+
+interface DesignMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  actions?: DesignAction[]
+  appliedActions?: Set<number>
+  isError?: boolean
+}
+
+const DESIGN_SUGGESTIONS = [
+  '二重申請で不正な挙動をしないことを確認するパターンを作成してください',
+  'ログイン画面の異常系テストパターンを追加してください',
+  '決済フローの境界値テストを網羅してください',
+  'セッションタイムアウトに関するテストケースを追加してください',
+  'SQLインジェクション対策のセキュリティテストを追加してください',
+  '同時アクセス（並行処理）の異常系テストを作成してください',
+]
+
+function DesignChatPopup({
+  projectId,
+  onClose,
+  onItemsChanged,
+}: {
+  projectId: string
+  onClose: () => void
+  onItemsChanged: () => void
+}) {
+  const [messages, setMessages] = useState<DesignMessage[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [applying, setApplying] = useState<number | null>(null)
+  const [minimized, setMinimized] = useState(false)
+
+  const popupRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ x: Math.max(0, window.innerWidth - 680), y: 80 })
+  const [size, setSize] = useState({ w: 640, h: 560 })
+  const dragging = useRef(false)
+  const resizing = useRef(false)
+  const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 })
+  const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 })
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  const onHeaderMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    dragging.current = true
+    dragStart.current = { x: e.clientX, y: e.clientY, px: position.x, py: position.y }
+    e.preventDefault()
+  }
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (dragging.current) {
+        setPosition({
+          x: Math.max(0, dragStart.current.px + e.clientX - dragStart.current.x),
+          y: Math.max(0, dragStart.current.py + e.clientY - dragStart.current.y),
+        })
+      }
+      if (resizing.current) {
+        setSize({
+          w: Math.max(380, resizeStart.current.w + e.clientX - resizeStart.current.x),
+          h: Math.max(300, resizeStart.current.h + e.clientY - resizeStart.current.y),
+        })
+      }
+    }
+    const onUp = () => { dragging.current = false; resizing.current = false }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    resizing.current = true
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h }
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const sendMessage = useCallback(async (questionOverride?: string) => {
+    const question = (questionOverride ?? input).trim()
+    if (!question || loading) return
+    setInput('')
+    const userMsg: DesignMessage = { id: uuidv4(), role: 'user', content: question }
+    setMessages(prev => [...prev, userMsg])
+    setLoading(true)
+    try {
+      const history = messages.slice(-8).map(m => ({ role: m.role, content: m.content }))
+      const res = await fetch('/api/design-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, userMessage: question, history }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || '生成に失敗しました')
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: 'assistant', content: data.message,
+        actions: data.actions || [], appliedActions: new Set<number>(),
+      }])
+    } catch (e) {
+      setMessages(prev => [...prev, {
+        id: uuidv4(), role: 'assistant',
+        content: `エラー: ${e instanceof Error ? e.message : String(e)}`,
+        isError: true,
+      }])
+    } finally {
+      setLoading(false)
+    }
+  }, [input, loading, messages, projectId])
+
+  const applyAction = async (msgId: string, actionIndex: number, action: DesignAction) => {
+    setApplying(actionIndex)
+    try {
+      const res = await fetch('/api/design-chat', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, actions: [action] }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || '適用に失敗しました')
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, appliedActions: new Set([...(m.appliedActions || []), actionIndex]) } : m
+      ))
+      onItemsChanged()
+    } catch (e) {
+      alert(`適用エラー: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setApplying(null)
+    }
+  }
+
+  const applyAllActions = async (msgId: string, actions: DesignAction[], allIndices: number[]) => {
+    setApplying(-1)
+    try {
+      const res = await fetch('/api/design-chat', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, actions }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || '適用に失敗しました')
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, appliedActions: new Set(allIndices) } : m
+      ))
+      onItemsChanged()
+    } catch (e) {
+      alert(`適用エラー: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setApplying(null)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+  }
+
+  const priorityBadge = (p?: string) => {
+    if (p === 'HIGH') return <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700">高</span>
+    if (p === 'MEDIUM') return <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-yellow-100 text-yellow-700">中</span>
+    return <span className="px-1.5 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700">低</span>
+  }
+
+  return (
+    <div
+      ref={popupRef}
+      style={{
+        position: 'fixed',
+        left: position.x,
+        top: position.y,
+        width: minimized ? 280 : size.w,
+        height: minimized ? 'auto' : size.h,
+        zIndex: 9999,
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)',
+        borderRadius: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        background: '#fff',
+        border: '1px solid rgba(0,0,0,0.08)',
+        minWidth: 280,
+      }}
+    >
+      {/* ヘッダー（ドラッグ可能） */}
+      <div
+        onMouseDown={onHeaderMouseDown}
+        style={{ cursor: 'grab', userSelect: 'none' }}
+        className="flex-shrink-0 bg-gradient-to-r from-violet-700 to-indigo-600 text-white px-4 py-3"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs text-white/70 font-medium">AIテスト設計チャット</p>
+              <p className="text-xs font-bold text-white truncate">AIとテスト項目を作成・編集</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {messages.length > 0 && !minimized && (
+              <button onClick={() => setMessages([])}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white/70 hover:text-white"
+                title="チャットをクリア">
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={() => setMinimized(v => !v)}
+              className="p-1.5 rounded-lg hover:bg-white/15 text-white/70 hover:text-white"
+              title={minimized ? '展開' : '最小化'}>
+              {minimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+            </button>
+            <button onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-white/15 text-white/70 hover:text-white"
+              title="閉じる">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {!minimized && (
+        <>
+          {/* チャットエリア */}
+          <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-4" style={{ userSelect: 'text' }}>
+            {messages.length === 0 && (
+              <div className="space-y-4">
+                <div className="bg-white border border-violet-100 rounded-xl p-4 shadow-sm">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Bot className="w-4 h-4 text-violet-600" />
+                    <p className="text-xs font-semibold text-violet-700">AIテスト設計アシスタント</p>
+                  </div>
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    テスト項目の追加・編集についてお気軽にご相談ください。
+                    AIが現在のテスト項目を把握した上で、具体的なテストケースを提案します。
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 px-1">よく使われる依頼</p>
+                  <div className="space-y-2">
+                    {DESIGN_SUGGESTIONS.map((s, i) => (
+                      <button key={i} onClick={() => sendMessage(s)}
+                        className="w-full text-left text-xs text-gray-700 bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 hover:border-violet-400 hover:bg-violet-50 hover:text-violet-800 transition-all shadow-sm">
+                        <Sparkles className="w-3 h-3 text-violet-400 inline mr-1.5" />{s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <div key={msg.id} className={clsx('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div className={clsx(
+                  'max-w-[92%] rounded-2xl px-4 py-3',
+                  msg.role === 'user'
+                    ? 'bg-violet-600 text-white rounded-br-md'
+                    : msg.isError
+                      ? 'bg-red-50 border border-red-200 text-red-700'
+                      : 'bg-white border border-gray-200 shadow-sm rounded-bl-md'
+                )}>
+                  <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-white' : 'text-gray-700')}>
+                    {renderSimpleMarkdown(msg.content)}
+                  </div>
+
+                  {msg.role === 'assistant' && msg.actions && msg.actions.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-500">提案アクション（{msg.actions.length}件）</p>
+                        {msg.actions.length > 1 && msg.appliedActions?.size !== msg.actions.length && (
+                          <button
+                            onClick={() => {
+                              const unapplied = msg.actions!.filter((_, i) => !msg.appliedActions?.has(i))
+                              const unappliedIndices = msg.actions!.map((_, i) => i).filter(i => !msg.appliedActions?.has(i))
+                              applyAllActions(msg.id, unapplied, msg.actions!.map((_, i) => i))
+                            }}
+                            disabled={applying !== null}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {applying === -1 ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                            すべて適用
+                          </button>
+                        )}
+                      </div>
+                      {msg.actions.map((action, ai) => {
+                        const isApplied = msg.appliedActions?.has(ai)
+                        return (
+                          <div key={ai} className={clsx(
+                            'rounded-xl border p-3 transition-all',
+                            isApplied ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50 hover:border-violet-200 hover:bg-violet-50/50'
+                          )}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                  <span className={clsx(
+                                    'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold',
+                                    action.type === 'add' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                                  )}>
+                                    {action.type === 'add' ? <PlusCircle className="w-3 h-3" /> : <Edit3 className="w-3 h-3" />}
+                                    {action.type === 'add' ? '追加' : '編集'}
+                                  </span>
+                                  {action.item.priority && priorityBadge(action.item.priority as string)}
+                                  {action.item.testPerspective && (
+                                    <span className="px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-600">{action.item.testPerspective}</span>
+                                  )}
+                                </div>
+                                {action.item.categoryMajor && (
+                                  <p className="text-xs text-gray-400 mb-0.5">
+                                    {action.item.categoryMajor}{action.item.categoryMinor ? ` > ${action.item.categoryMinor}` : ''}
+                                  </p>
+                                )}
+                                <p className="text-xs font-semibold text-gray-800 leading-snug">
+                                  {action.item.testTitle || action.description}
+                                </p>
+                                {action.item.expectedResult && (
+                                  <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">期待: {action.item.expectedResult}</p>
+                                )}
+                              </div>
+                              <div className="flex-shrink-0">
+                                {isApplied ? (
+                                  <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                                    <CheckCircle className="w-3.5 h-3.5" />適用済
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => applyAction(msg.id, ai, action)}
+                                    disabled={applying !== null}
+                                    className="text-xs px-2.5 py-1 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-600 hover:text-white hover:border-violet-600 disabled:opacity-50 transition-colors flex items-center gap-1"
+                                  >
+                                    {applying === ai ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                                    適用
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-white border border-gray-200 shadow-sm rounded-2xl rounded-bl-md px-4 py-3">
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
+                    <span className="text-sm">テスト項目を設計中...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* 入力エリア */}
+          <div className="flex-shrink-0 border-t border-gray-100 bg-white p-3">
+            <div className="flex gap-2 items-end">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="テスト設計の依頼を入力... (Enterで送信、Shift+Enterで改行)"
+                className="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-gray-50"
+                rows={2}
+                style={{ userSelect: 'text', minHeight: 56 }}
+              />
+              <button
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || loading}
+                className="p-2.5 rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* リサイズハンドル */}
+          <div
+            onMouseDown={onResizeMouseDown}
+            style={{
+              position: 'absolute', right: 4, bottom: 4,
+              width: 16, height: 16, cursor: 'nwse-resize',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#9ca3af',
+            }}
+          >
+            <GripVertical className="w-3.5 h-3.5 rotate-45" />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function SourceBadge({ item, onClick }: { item: TestItem; onClick: () => void }) {
   const count = item.sourceRefs?.length ?? 0
   if (count === 0) {
@@ -519,6 +927,8 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
   const [automatableReasonItem, setAutomatableReasonItem] = useState<TestItem | null>(null)
   // RAGチャットモーダル
   const [ragChatItem, setRagChatItem] = useState<TestItem | null>(null)
+  // テスト設計チャット
+  const [showDesignChat, setShowDesignChat] = useState(false)
 
   const fetchItems = async () => {
     try {
@@ -626,15 +1036,36 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
       {ragChatItem && (
         <RagChatModal item={ragChatItem} projectId={params.id} onClose={() => setRagChatItem(null)} />
       )}
+      {/* テスト設計チャットポップアップ */}
+      {showDesignChat && (
+        <DesignChatPopup
+          projectId={params.id}
+          onClose={() => setShowDesignChat(false)}
+          onItemsChanged={fetchItems}
+        />
+      )}
 
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">テスト項目書</h1>
           <p className="text-sm text-gray-500 mt-0.5">AI生成されたテスト項目を確認・編集します</p>
         </div>
-        <Link href={`/projects/${params.id}/export`} className="btn-primary">
-          <Download className="w-4 h-4" />Excel出力
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowDesignChat(v => !v)}
+            className={clsx(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all border',
+              showDesignChat
+                ? 'bg-violet-600 text-white border-violet-600 shadow-lg shadow-violet-200'
+                : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50 hover:border-violet-500'
+            )}
+          >
+            <Bot className="w-4 h-4" />テスト設計チャット
+          </button>
+          <Link href={`/projects/${params.id}/export`} className="btn-primary">
+            <Download className="w-4 h-4" />Excel出力
+          </Link>
+        </div>
       </div>
 
       {/* 統計 */}
