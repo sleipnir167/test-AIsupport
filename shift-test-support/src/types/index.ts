@@ -313,6 +313,8 @@ export interface AdminSettings {
   designChatTemperature?: number
   /** テスト設計チャット Max Tokens */
   designChatMaxTokens?: number
+  /** テスト設計チャットボタンの色（Tailwindクラス。例: bg-violet-700） */
+  designChatButtonColor?: string
   /** RAGチャット RAG検索件数（ドキュメント） */
   ragChatTopKDoc?: number
   /** RAGチャット RAG検索件数（サイト分析） */

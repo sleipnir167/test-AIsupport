@@ -34,6 +34,7 @@ export async function GET() {
       ragChatTopKDoc:            s.ragChatTopKDoc             ?? 12,
       ragChatTopKSite:           s.ragChatTopKSite            ?? 5,
       ragChatTopKSrc:            s.ragChatTopKSrc             ?? 10,
+      designChatButtonColor:     s.designChatButtonColor      ?? '',
       showSidebarDocuments:      s.showSidebarDocuments       ?? true,
       showSidebarUrlAnalysis:    s.showSidebarUrlAnalysis     ?? true,
       showSidebarSourceCode:     s.showSidebarSourceCode      ?? true,
@@ -74,6 +75,7 @@ export async function GET() {
       ragChatTopKDoc: 12,
       ragChatTopKSite: 5,
       ragChatTopKSrc: 10,
+      designChatButtonColor: '',
     })
   }
 }

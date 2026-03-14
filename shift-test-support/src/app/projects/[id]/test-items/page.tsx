@@ -224,17 +224,21 @@ function uuidv4() {
   })
 }
 
-function renderSimpleMarkdown(text: string): React.ReactNode[] {
+function renderSimpleMarkdown(text: string, isUser = false): React.ReactNode[] {
+  // ユーザー発言は白文字、AI返答はグレー文字
+  const headingCls = isUser ? "text-sm font-bold text-white mt-3 mb-1" : "text-sm font-bold text-gray-900 mt-3 mb-1"
+  const listCls    = isUser ? "text-sm text-white/90 ml-4 my-0.5 list-disc" : "text-sm text-gray-700 ml-4 my-0.5 list-disc"
+  const paraCls    = isUser ? "text-sm text-white my-0.5 leading-relaxed" : "text-sm text-gray-700 my-0.5 leading-relaxed"
   return text.split('\n').map((line, i) => {
-    if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(4)}</h3>
-    if (line.startsWith('## ')) return <h2 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(3)}</h2>
-    if (line.startsWith('# ')) return <h2 key={i} className="text-sm font-bold text-gray-900 mt-3 mb-1">{line.slice(2)}</h2>
-    if (line.startsWith('- ') || line.startsWith('* ')) return <li key={i} className="text-sm text-gray-700 ml-4 my-0.5 list-disc">{line.slice(2)}</li>
+    if (line.startsWith('### ')) return <h3 key={i} className={headingCls}>{line.slice(4)}</h3>
+    if (line.startsWith('## ')) return <h2 key={i} className={headingCls}>{line.slice(3)}</h2>
+    if (line.startsWith('# ')) return <h2 key={i} className={headingCls}>{line.slice(2)}</h2>
+    if (line.startsWith('- ') || line.startsWith('* ')) return <li key={i} className={listCls}>{line.slice(2)}</li>
     if (line.trim() === '') return <div key={i} className="h-2" />
     // inline bold
     const parts = line.split(/(\*\*[^*]+\*\*)/g)
     return (
-      <p key={i} className="text-sm text-gray-700 my-0.5 leading-relaxed">
+      <p key={i} className={paraCls}>
         {parts.map((p, pi) =>
           p.startsWith('**') && p.endsWith('**')
             ? <strong key={pi} className="font-semibold">{p.slice(2, -2)}</strong>
@@ -751,7 +755,7 @@ function DesignChatPopup({
                       : 'bg-white border border-gray-200 shadow-sm rounded-bl-md'
                 )}>
                   <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-white' : 'text-gray-700')}>
-                    {renderSimpleMarkdown(msg.content)}
+                    {renderSimpleMarkdown(msg.content, msg.role === 'user')}
                   </div>
 
                   {msg.role === 'assistant' && msg.actions && msg.actions.length > 0 && (
@@ -933,6 +937,15 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
   const [ragChatItem, setRagChatItem] = useState<TestItem | null>(null)
   // テスト設計チャット
   const [showDesignChat, setShowDesignChat] = useState(false)
+  const [designChatButtonColor, setDesignChatButtonColor] = useState('')
+
+  // 管理者設定からボタン色を取得
+  useEffect(() => {
+    fetch('/api/admin/public-settings')
+      .then(r => r.json())
+      .then(s => { if (s.designChatButtonColor) setDesignChatButtonColor(s.designChatButtonColor) })
+      .catch(() => {})
+  }, [])
 
   const fetchItems = async () => {
     try {
@@ -1057,7 +1070,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowDesignChat(v => !v)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-violet-700 hover:bg-violet-800 text-white shadow-sm"
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all text-white shadow-sm ${designChatButtonColor || 'bg-violet-700 hover:bg-violet-800'}`}
           >
             <Bot className="w-4 h-4" />テスト設計チャット
           </button>

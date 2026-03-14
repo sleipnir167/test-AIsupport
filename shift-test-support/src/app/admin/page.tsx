@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS: AdminSettings = {
   ragChatMaxTokens:            4000,
   designChatTemperature:       0.3,
   designChatMaxTokens:         4000,
+  designChatButtonColor:       '',
   ragChatTopKDoc:              12,
   ragChatTopKSite:             5,
   ragChatTopKSrc:              10,
@@ -976,6 +977,35 @@ export default function AdminPage() {
                     onChange={e => setSettings(s => ({ ...s, designChatMaxTokens: parseInt(e.target.value) }))}
                     className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm" />
                   <p className="text-xs text-gray-600 mt-1">推奨: 3000〜6000（テスト項目が多い場合は増やす）</p>
+                </div>
+              </div>
+
+              <hr className="border-gray-800 my-5" />
+              <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                <Type className="w-4 h-4 text-violet-400" />テスト設計チャットボタンの色
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                テスト項目書画面のチャットボタンの背景色を設定します。Tailwindのbgクラス名を直接入力してください。
+                空欄の場合は <span className="font-mono text-gray-400">bg-violet-700</span> が使用されます。
+              </p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex-1 min-w-48">
+                  <input
+                    type="text"
+                    value={settings.designChatButtonColor ?? ''}
+                    onChange={e => setSettings(s => ({ ...s, designChatButtonColor: e.target.value }))}
+                    placeholder="例: bg-violet-700 / bg-blue-700 / bg-gray-700"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 font-mono outline-none focus:border-shift-600"
+                  />
+                </div>
+                {/* プレビュー */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {['bg-violet-700','bg-violet-900','bg-indigo-700','bg-blue-700','bg-slate-700','bg-gray-700','bg-teal-700','bg-shift-800'].map(cls => (
+                    <button key={cls} onClick={() => setSettings(s => ({ ...s, designChatButtonColor: cls }))}
+                      className={`text-xs px-3 py-1.5 rounded-lg text-white font-medium transition-all border-2 ${cls} ${(settings.designChatButtonColor ?? '') === cls ? 'border-white' : 'border-transparent opacity-80 hover:opacity-100'}`}>
+                      {cls.replace('bg-', '')}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
