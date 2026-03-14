@@ -745,12 +745,12 @@ function DesignChatPopup({
                 <div className={clsx(
                   'max-w-[92%] rounded-2xl px-4 py-3',
                   msg.role === 'user'
-                    ? 'bg-white border border-violet-200 shadow-sm rounded-br-md'
+                    ? 'bg-violet-500 rounded-br-md'
                     : msg.isError
                       ? 'bg-red-50 border border-red-200 text-red-700'
                       : 'bg-white border border-gray-200 shadow-sm rounded-bl-md'
                 )}>
-                  <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-gray-800' : 'text-gray-700')}>
+                  <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-white' : 'text-gray-700')}>
                     {renderSimpleMarkdown(msg.content)}
                   </div>
 
@@ -1057,7 +1057,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowDesignChat(v => !v)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all border bg-violet-600 text-white border-violet-600 hover:bg-violet-700 shadow-sm"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-violet-700 hover:bg-violet-800 text-white shadow-sm"
           >
             <Bot className="w-4 h-4" />テスト設計チャット
           </button>

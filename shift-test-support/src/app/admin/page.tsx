@@ -1008,16 +1008,11 @@ export default function AdminPage() {
         {/* ━━━━━━━━━━━━━━━━━ 表示制御 ━━━━━━━━━━━━━━━━━ */}
         {activeTab === 'display' && (
           <div className="space-y-6">
+            {/* 画面表示制御（AI関連） */}
             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
               <h2 className="font-bold text-white mb-4 flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-blue-400" />画面表示制御
               </h2>
-                <ToggleRow
-                label="AIやり取りログタブを表示"
-                description="サイドバーの「AIやり取りログ」タブの表示・非表示を切り替えます。非表示にしてもログ自体は記録されます。"
-                value={settings.showAiLogsTab}
-                onChange={v => setSettings(s => ({ ...s, showAiLogsTab: v }))}
-              />
               <ToggleRow
                 label="詳細パラメータを初期展開"
                 description="generate ページの「生成パラメータ」アコーディオンを最初から開いた状態にします。"
@@ -1032,7 +1027,7 @@ export default function AdminPage() {
                 <ChevronRight className="w-4 h-4 text-shift-400" />サイドバーナビゲーション項目
               </h2>
               <p className="text-xs text-gray-500 mb-4">
-                チェックを外した項目はサイドバーから非表示になります。プロジェクト概要は常に表示されます。
+                OFFにした項目はサイドバーから非表示になります。アプリの表示順と同じ順番で設定できます。
               </p>
               {([
                 { key: 'showSidebarDocuments',      label: 'ドキュメント管理',   desc: '仕様書・設計書・QAナレッジの管理画面' },
@@ -1044,6 +1039,7 @@ export default function AdminPage() {
                 { key: 'showSidebarTestItems',      label: 'テスト項目書',       desc: 'テスト項目の表示・編集・設計チャット' },
                 { key: 'showSidebarExport',         label: 'Excel出力',          desc: 'テスト項目書のExcelダウンロード' },
                 { key: 'showSidebarReview',         label: 'AIレビュー・評価',   desc: 'テスト品質のAI評価・スコアリング' },
+                { key: 'showAiLogsTab',             label: 'AIやり取りログ',     desc: 'AI処理のプロンプト・レスポンス・トークン数の閲覧（非表示でもログは記録）' },
               ] as const).map(({ key, label, desc }) => (
                 <div key={key} className="flex items-center justify-between py-3 border-b border-gray-800 last:border-0">
                   <div>
