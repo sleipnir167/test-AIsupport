@@ -33,6 +33,15 @@ const DEFAULT_SETTINGS: AdminSettings = {
   refExcerptLength:      250,
   useHybridSearch:             false,
   useReranking:                false,
+  showSidebarDocuments:        true,
+  showSidebarUrlAnalysis:      true,
+  showSidebarSourceCode:       true,
+  showSidebarSystemAnalysis:   true,
+  showSidebarRagChat:          true,
+  showSidebarGenerate:         true,
+  showSidebarTestItems:        true,
+  showSidebarExport:           true,
+  showSidebarReview:           true,
   defaultRagChatModelId:       '',
   defaultDesignChatModelId:    '',
   ragChatTemperature:          0.3,
@@ -1003,7 +1012,7 @@ export default function AdminPage() {
               <h2 className="font-bold text-white mb-4 flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-blue-400" />画面表示制御
               </h2>
-              <ToggleRow
+                <ToggleRow
                 label="AIやり取りログタブを表示"
                 description="サイドバーの「AIやり取りログ」タブの表示・非表示を切り替えます。非表示にしてもログ自体は記録されます。"
                 value={settings.showAiLogsTab}
@@ -1015,6 +1024,41 @@ export default function AdminPage() {
                 value={settings.showAdvancedParams}
                 onChange={v => setSettings(s => ({ ...s, showAdvancedParams: v }))}
               />
+            </div>
+
+            {/* サイドバー項目制御 */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <h2 className="font-bold text-white mb-1 flex items-center gap-2">
+                <ChevronRight className="w-4 h-4 text-shift-400" />サイドバーナビゲーション項目
+              </h2>
+              <p className="text-xs text-gray-500 mb-4">
+                チェックを外した項目はサイドバーから非表示になります。プロジェクト概要は常に表示されます。
+              </p>
+              {([
+                { key: 'showSidebarDocuments',      label: 'ドキュメント管理',   desc: '仕様書・設計書・QAナレッジの管理画面' },
+                { key: 'showSidebarUrlAnalysis',    label: 'URL構造分析',        desc: 'WebアプリのURL・サイト構造解析' },
+                { key: 'showSidebarSourceCode',     label: 'ソースコード取込',   desc: 'ソースコードのアップロード・RAGインデックス' },
+                { key: 'showSidebarSystemAnalysis', label: 'システム分析',       desc: 'AIによるシステム理解・テスト方針分析' },
+                { key: 'showSidebarRagChat',        label: 'RAG検索チャット',    desc: 'ドキュメントへの質問応答チャット' },
+                { key: 'showSidebarGenerate',       label: 'AIテスト生成',       desc: 'テスト項目の自動生成（メイン機能）' },
+                { key: 'showSidebarTestItems',      label: 'テスト項目書',       desc: 'テスト項目の表示・編集・設計チャット' },
+                { key: 'showSidebarExport',         label: 'Excel出力',          desc: 'テスト項目書のExcelダウンロード' },
+                { key: 'showSidebarReview',         label: 'AIレビュー・評価',   desc: 'テスト品質のAI評価・スコアリング' },
+              ] as const).map(({ key, label, desc }) => (
+                <div key={key} className="flex items-center justify-between py-3 border-b border-gray-800 last:border-0">
+                  <div>
+                    <p className="text-sm font-medium text-gray-200">{label}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings(s => ({ ...s, [key]: !(s[key] ?? true) }))}
+                    className="ml-4 flex-shrink-0">
+                    {(settings[key] ?? true)
+                      ? <ToggleRight className="w-8 h-8 text-shift-400" />
+                      : <ToggleLeft className="w-8 h-8 text-gray-600" />}
+                  </button>
+                </div>
+              ))}
             </div>
 
             <div className="bg-gray-800/40 border border-gray-700 rounded-xl px-4 py-3 text-gray-300 text-xs">

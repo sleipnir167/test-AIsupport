@@ -83,18 +83,18 @@ function SourceRefModal({ item, onClose }: { item: TestItem; onClose: () => void
                       </a>
                     )}
                   </div>
-                  {/* 該当箇所（excerpt本文） (■3 fix) */}
-                  {body && (
-                    <div className="bg-gray-50 rounded-lg p-3 mb-2">
-                      <p className="text-xs text-gray-500 mb-1 font-medium">📄 該当箇所</p>
-                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{body}</p>
-                    </div>
-                  )}
-                  {/* 導出根拠（分離表示） (■3 fix & ■4) */}
+                  {/* 導出根拠（先頭に表示） */}
                   {derivation && (
-                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 mb-2">
                       <p className="text-xs text-amber-600 mb-1 font-medium">🔍 導出根拠</p>
                       <p className="text-xs text-amber-800 leading-relaxed">{derivation}</p>
+                    </div>
+                  )}
+                  {/* 該当箇所（excerpt本文） */}
+                  {body && (
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs text-gray-500 mb-1 font-medium">📄 該当箇所</p>
+                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{body}</p>
                     </div>
                   )}
                   {/* excerpt が空の場合（REF不明等） */}
@@ -745,12 +745,12 @@ function DesignChatPopup({
                 <div className={clsx(
                   'max-w-[92%] rounded-2xl px-4 py-3',
                   msg.role === 'user'
-                    ? 'bg-violet-600 text-white rounded-br-md'
+                    ? 'bg-white border border-violet-200 shadow-sm rounded-br-md'
                     : msg.isError
                       ? 'bg-red-50 border border-red-200 text-red-700'
                       : 'bg-white border border-gray-200 shadow-sm rounded-bl-md'
                 )}>
-                  <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-white' : 'text-gray-700')}>
+                  <div className={clsx('text-sm leading-relaxed', msg.role === 'user' ? 'text-gray-800' : 'text-gray-700')}>
                     {renderSimpleMarkdown(msg.content)}
                   </div>
 
@@ -1057,12 +1057,7 @@ export default function TestItemsPage({ params }: { params: { id: string } }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowDesignChat(v => !v)}
-            className={clsx(
-              'inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all border',
-              showDesignChat
-                ? 'bg-violet-600 text-white border-violet-600 shadow-lg shadow-violet-200'
-                : 'bg-white text-violet-700 border-violet-300 hover:bg-violet-50 hover:border-violet-500'
-            )}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all border bg-violet-600 text-white border-violet-600 hover:bg-violet-700 shadow-sm"
           >
             <Bot className="w-4 h-4" />テスト設計チャット
           </button>

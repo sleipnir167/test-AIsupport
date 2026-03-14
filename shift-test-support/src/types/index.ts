@@ -273,6 +273,17 @@ export interface AdminSettings {
   showAiLogsTab: boolean           // AIやり取りログタブを表示するか
   showAdvancedParams: boolean      // 詳細パラメータ（バッチサイズ・RAK等）を初期展開するか
 
+  // ─── サイドバー項目表示制御（未設定 = 表示） ──────────────────
+  showSidebarDocuments?: boolean        // ドキュメント管理
+  showSidebarUrlAnalysis?: boolean      // URL構造分析
+  showSidebarSourceCode?: boolean       // ソースコード取込
+  showSidebarSystemAnalysis?: boolean   // システム分析
+  showSidebarRagChat?: boolean          // RAG検索チャット
+  showSidebarGenerate?: boolean         // AIテスト生成
+  showSidebarTestItems?: boolean        // テスト項目書
+  showSidebarExport?: boolean           // Excel出力
+  showSidebarReview?: boolean           // AIレビュー・評価
+
   // ─── UI文言カスタマイズ ───────────────────────────────────────
   labelProjectName: string         // 「プロジェクト名」ラベル
   labelTargetSystem: string        // 「テスト対象システム」ラベル

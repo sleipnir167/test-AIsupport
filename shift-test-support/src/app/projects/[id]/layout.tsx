@@ -12,7 +12,7 @@ export default function ProjectLayout({
   params: { id: string }
 }) {
   const [project, setProject] = useState<Project | null>(null)
-  const [showAiLogsTab, setShowAiLogsTab] = useState(true)
+  const [sidebarVis, setSidebarVis] = useState<Partial<AdminSettings>>({})
 
   useEffect(() => {
     fetch(`/api/projects/${params.id}`)
@@ -20,12 +20,10 @@ export default function ProjectLayout({
       .then(data => { if (data?.id) setProject(data) })
       .catch(() => {})
 
-    // AdminSettings を取得して表示制御に反映
+    // AdminSettings を取得してサイドバー表示制御に反映
     fetch('/api/admin/public-settings')
       .then(r => r.json())
-      .then((s: Partial<AdminSettings>) => {
-        if (typeof s.showAiLogsTab === 'boolean') setShowAiLogsTab(s.showAiLogsTab)
-      })
+      .then((s: Partial<AdminSettings>) => { setSidebarVis(s) })
       .catch(() => {})
   }, [params.id])
 
@@ -35,7 +33,16 @@ export default function ProjectLayout({
       <ProjectSidebar
         projectId={params.id}
         projectName={project?.name || '読み込み中...'}
-        showAiLogsTab={showAiLogsTab}
+        showAiLogsTab={sidebarVis.showAiLogsTab ?? true}
+        showSidebarDocuments={sidebarVis.showSidebarDocuments ?? true}
+        showSidebarUrlAnalysis={sidebarVis.showSidebarUrlAnalysis ?? true}
+        showSidebarSourceCode={sidebarVis.showSidebarSourceCode ?? true}
+        showSidebarSystemAnalysis={sidebarVis.showSidebarSystemAnalysis ?? true}
+        showSidebarRagChat={sidebarVis.showSidebarRagChat ?? true}
+        showSidebarGenerate={sidebarVis.showSidebarGenerate ?? true}
+        showSidebarTestItems={sidebarVis.showSidebarTestItems ?? true}
+        showSidebarExport={sidebarVis.showSidebarExport ?? true}
+        showSidebarReview={sidebarVis.showSidebarReview ?? true}
       />
       <main className="pt-14 pl-60 min-h-screen">
         <div className="p-6">{children}</div>

@@ -10,27 +10,47 @@ import { clsx } from 'clsx'
 interface SidebarProps {
   projectId: string
   projectName: string
-  showAiLogsTab?: boolean  // 管理者設定で制御（未指定時はtrue）
+  showAiLogsTab?: boolean
+  showSidebarDocuments?: boolean
+  showSidebarUrlAnalysis?: boolean
+  showSidebarSourceCode?: boolean
+  showSidebarSystemAnalysis?: boolean
+  showSidebarRagChat?: boolean
+  showSidebarGenerate?: boolean
+  showSidebarTestItems?: boolean
+  showSidebarExport?: boolean
+  showSidebarReview?: boolean
 }
 
-export default function ProjectSidebar({ projectId, projectName, showAiLogsTab = true }: SidebarProps) {
+export default function ProjectSidebar({
+  projectId, projectName,
+  showAiLogsTab = true,
+  showSidebarDocuments = true,
+  showSidebarUrlAnalysis = true,
+  showSidebarSourceCode = true,
+  showSidebarSystemAnalysis = true,
+  showSidebarRagChat = true,
+  showSidebarGenerate = true,
+  showSidebarTestItems = true,
+  showSidebarExport = true,
+  showSidebarReview = true,
+}: SidebarProps) {
   const pathname = usePathname()
   const base = `/projects/${projectId}`
 
   const navItems = [
-    { href: base,                           label: 'プロジェクト概要',   icon: FolderOpen,  exact: true },
-    { href: `${base}/documents`,            label: 'ドキュメント管理',   icon: FileText },
-    { href: `${base}/url-analysis`,         label: 'URL構造分析',        icon: Globe },
-    { href: `${base}/source-code`,          label: 'ソースコード取込',   icon: Code2 },
-    { href: `${base}/system-analysis`,      label: 'システム分析',       icon: BarChart2 },
-    { href: `${base}/rag-chat`,              label: 'RAG検索チャット',    icon: MessageCircle },
-    { href: `${base}/generate`,             label: 'AIテスト生成',       icon: Sparkles },
-    { href: `${base}/test-items`,       label: 'テスト項目書',       icon: ClipboardList },
-    { href: `${base}/export`,           label: 'Excel出力',          icon: Download },
-    { href: `${base}/review`,           label: 'AIレビュー・評価',   icon: ShieldCheck },
-    // showAiLogsTab が false の場合は非表示
-    ...(showAiLogsTab ? [{ href: `${base}/ai-logs`, label: 'AIやり取りログ', icon: MessageSquare }] : []),
-  ]
+    { href: base,                      label: 'プロジェクト概要', icon: FolderOpen,    exact: true, show: true },
+    { href: `${base}/documents`,       label: 'ドキュメント管理', icon: FileText,      show: showSidebarDocuments },
+    { href: `${base}/url-analysis`,    label: 'URL構造分析',      icon: Globe,         show: showSidebarUrlAnalysis },
+    { href: `${base}/source-code`,     label: 'ソースコード取込', icon: Code2,         show: showSidebarSourceCode },
+    { href: `${base}/system-analysis`, label: 'システム分析',     icon: BarChart2,     show: showSidebarSystemAnalysis },
+    { href: `${base}/rag-chat`,        label: 'RAG検索チャット',  icon: MessageCircle, show: showSidebarRagChat },
+    { href: `${base}/generate`,        label: 'AIテスト生成',     icon: Sparkles,      show: showSidebarGenerate },
+    { href: `${base}/test-items`,      label: 'テスト項目書',     icon: ClipboardList, show: showSidebarTestItems },
+    { href: `${base}/export`,          label: 'Excel出力',        icon: Download,      show: showSidebarExport },
+    { href: `${base}/review`,          label: 'AIレビュー・評価', icon: ShieldCheck,   show: showSidebarReview },
+    { href: `${base}/ai-logs`,         label: 'AIやり取りログ',   icon: MessageSquare, show: showAiLogsTab },
+  ].filter(item => item.show)
 
   return (
     <aside className="w-60 bg-white border-r border-gray-200 fixed top-14 bottom-0 left-0 flex flex-col z-40">
